@@ -1,0 +1,6 @@
+Age	BusinessTravel	Department	DistanceFromHome	Education	Gender	JobLevel	JobRole	JobSatisfaction	MaritalStatus	MonthlyIncome	OverTime	PercentSalaryHike	PerformanceRating	StockOptionLevel	TotalWorkingYears	YearsAtCompany	YearsSinceLastPromotion	Name
+continuous	discrete	discrete	continuous	discrete	discrete	continuous	discrete	continuous	discrete	continuous	discrete	continuous	continuous	discrete	continuous	continuous	continuous	string
+																
+27.0	Travel_Rarely	Research & Development	17.0	3	Male	2.0	Laboratory Technician	1.0	Single	4903.0	Yes	11.0	4.0	0	5.0	1.0	1.0	John
+50.0	Travel_Rarely	Sales	20.0	2	Female	1.0	Sales Executive	4.0	Married	2586.0	No	17.0	3.0	0	3.0	3.0	0.0	Rachel
+35.0	Travel_Frequently	Research & Development	3.0	4	Female	3.0	Research Scientist	3.0	Single	5772.0	Yes	23.0	5.0	2	8.0	3.0	1.0	Veronica
