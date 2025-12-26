@@ -1116,6 +1116,7 @@ class ScatterPlotRequest(BaseModel):
     shape_attr: Optional[str] = None
     jittering: float = 0
     subset_indices: Optional[List[int]] = None
+    selected_indices: Optional[List[int]] = None  # 선택된 데이터 인덱스
 
 
 @api_v1.post("/visualize/scatter-plot", tags=["Visualize"])
@@ -1130,6 +1131,14 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
         
         # Load data
         data = Table(request.data_path)
+        original_len = len(data)
+        
+        # Filter by selected indices if provided
+        if request.selected_indices and len(request.selected_indices) > 0:
+            valid_indices = [i for i in request.selected_indices if 0 <= i < len(data)]
+            if valid_indices:
+                data = data[valid_indices]
+                logger.info(f"Scatter plot: filtered to {len(data)} of {original_len} instances")
         
         # Get variables
         variables = []
@@ -2410,6 +2419,7 @@ class DistributionsRequest(BaseModel):
     sort_by_freq: bool = False
     fitted_distribution: int = 0  # 0=None, 1=Normal, 2=Beta, 3=Gamma, etc.
     kde_smoothing: int = 10
+    selected_indices: Optional[List[int]] = None  # 선택된 데이터 인덱스
 
 
 @api_v1.post("/data/distributions")
@@ -2440,6 +2450,14 @@ async def get_distributions(request: DistributionsRequest):
         
         if data is None:
             raise HTTPException(status_code=400, detail="No data provided")
+        
+        # Filter by selected indices if provided (from DataTable selection)
+        original_len = len(data)
+        if request.selected_indices and len(request.selected_indices) > 0:
+            valid_indices = [i for i in request.selected_indices if 0 <= i < len(data)]
+            if valid_indices:
+                data = data[valid_indices]
+                logger.info(f"Distributions: filtered to {len(data)} of {original_len} instances")
         
         # Find the variable
         var = None
@@ -2678,6 +2696,7 @@ class BarPlotRequest(BaseModel):
     group_var: Optional[str] = None  # Discrete variable for grouping
     annot_var: Optional[str] = None  # Variable for x-axis annotations
     color_var: Optional[str] = None  # Discrete variable for coloring
+    selected_indices: Optional[List[int]] = None  # 선택된 데이터 인덱스
 
 
 @api_v1.post("/barplot")
@@ -2690,10 +2709,49 @@ async def get_barplot_data(request: BarPlotRequest):
         raise HTTPException(status_code=503, detail="Orange3 not available")
     
     try:
+        from Orange.data import Table
+        import numpy as np
+        
         # Load dataset
-        data = load_table_from_path(request.dataset_path)
+        dataset_path = request.dataset_path
+        
+        # Handle different path formats
+        if dataset_path.startswith('/'):
+            # Absolute path
+            data = Table(dataset_path)
+        elif 'datasets/' in dataset_path or dataset_path.endswith('.tab') or dataset_path.endswith('.csv'):
+            # Try as relative path first, then as Orange dataset name
+            try:
+                data = Table(dataset_path)
+            except:
+                # Try loading from datasets directory
+                possible_paths = [
+                    Path(dataset_path),
+                    DATASETS_CACHE_DIR / dataset_path,
+                    Path("datasets") / dataset_path,
+                ]
+                data = None
+                for p in possible_paths:
+                    if p.exists():
+                        data = Table(str(p))
+                        break
+                if data is None:
+                    raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_path}")
+        else:
+            # Try as Orange built-in dataset name
+            data = Table(dataset_path)
+        
         if data is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found: {request.dataset_path}")
+        
+        original_len = len(data)
+        
+        # Filter by selected indices if provided (from DataTable selection)
+        if request.selected_indices and len(request.selected_indices) > 0:
+            valid_indices = [i for i in request.selected_indices if 0 <= i < len(data)]
+            if valid_indices:
+                data = data[valid_indices]
+                logger.info(f"BarPlot: filtered to {len(data)} of {original_len} instances")
         
         MAX_INSTANCES = 200
         truncated = False
