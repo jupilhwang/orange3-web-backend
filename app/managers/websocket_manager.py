@@ -75,3 +75,4 @@ class WebSocketManager:
         """Get the number of connections for a workflow."""
         return len(self._connections.get(workflow_id, []))
 
+

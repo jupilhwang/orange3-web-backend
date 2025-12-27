@@ -545,3 +545,4 @@ def get_availability() -> Dict[str, bool]:
         "orange3": ORANGE3_AVAILABLE
     }
 
+

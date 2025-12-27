@@ -248,3 +248,4 @@ async def get_barplot_data(request: BarPlotRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+

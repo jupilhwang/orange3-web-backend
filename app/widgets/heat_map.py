@@ -343,3 +343,4 @@ async def get_heatmap_data(request: HeatMapRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+

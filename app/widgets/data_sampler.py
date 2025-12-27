@@ -245,3 +245,4 @@ def calculate_sample_fallback(request: SampleDataRequest):
         "note": "Fallback calculation (Orange3 not available)"
     }
 
+

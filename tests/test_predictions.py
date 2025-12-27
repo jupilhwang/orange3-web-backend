@@ -95,3 +95,4 @@ class TestPredictionsIntegration:
                     assert "columns" in predict_result
                     assert predict_result.get("instances", 0) > 0
 
+

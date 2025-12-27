@@ -232,3 +232,4 @@ async def select_scatter_plot_data(request: ScatterPlotSelectionRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+

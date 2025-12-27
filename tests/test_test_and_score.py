@@ -193,3 +193,4 @@ class TestTestAndScoreWidget:
                 
                 assert compare_result.get("rope_threshold") == 0.05
 
+
