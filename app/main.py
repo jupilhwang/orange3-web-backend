@@ -55,7 +55,7 @@ from .models import (
 )
 from .tenant import TenantManager, get_current_tenant
 from .websocket_manager import WebSocketManager
-from .widget_discovery import discover_widgets, get_widget_discovery
+# widget_discovery moved to routes/widget_registry.py
 
 # Widget API routers
 from .widgets import (
@@ -74,6 +74,9 @@ from .routes import (
     workflow_router,
     websocket_endpoint as workflow_ws_endpoint,
     get_workflow_adapters,
+    widget_registry_router,
+    legacy_widgets_handler,
+    set_widget_registry_getter,
 )
 from .routes.workflow import set_registry_getter, set_websocket_manager
 
@@ -149,6 +152,9 @@ async def lifespan(app: FastAPI):
     # Setup workflow router dependencies
     set_registry_getter(get_registry)
     set_websocket_manager(websocket_manager)
+    
+    # Setup widget registry router dependencies
+    set_widget_registry_getter(get_registry)
     
     print("\n🔒 Async locks enabled for concurrent access protection")
     
@@ -275,113 +281,6 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 async def liveness_check():
     """Liveness probe - checks if service is alive."""
     return {"status": "alive"}
-
-
-# ============================================================================
-# Widget Registry (uses existing WidgetRegistry)
-# ============================================================================
-
-# Cache for discovered widgets (refreshed on startup)
-_discovered_widgets = None
-
-
-def get_discovered_widgets():
-    """Get or discover widgets from Orange3 installation."""
-    global _discovered_widgets
-    if _discovered_widgets is None:
-        # Try to find Orange3 widgets path
-        possible_paths = [
-            os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"),
-            os.path.join(os.path.dirname(__file__), "..", ".venv", "lib", "python3.11", "site-packages", "Orange", "widgets"),
-        ]
-        
-        orange3_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                orange3_path = path
-                break
-        
-        if orange3_path:
-            print(f"Discovering widgets from: {orange3_path}")
-            _discovered_widgets = discover_widgets(orange3_path)
-            print(f"Discovered {_discovered_widgets.get('total', 0)} widgets")
-        else:
-            print("Warning: Orange3 widgets path not found")
-            _discovered_widgets = {"categories": [], "widgets": [], "total": 0}
-    
-    return _discovered_widgets
-
-
-@api_v1.get("/widgets", tags=["Widgets"])
-async def list_widgets(category: Optional[str] = None):
-    """List all widgets discovered from Orange3 installation."""
-    discovered = get_discovered_widgets()
-    widgets = discovered.get("widgets", [])
-    
-    if category:
-        widgets = [w for w in widgets if w.get("category") == category]
-    
-    return widgets
-
-
-@api_v1.get("/widgets/categories", tags=["Widgets"])
-async def list_categories():
-    """List widget categories discovered from Orange3."""
-    discovered = get_discovered_widgets()
-    categories = discovered.get("categories", [])
-    
-    # Format for frontend compatibility
-    return [
-        {
-            "name": cat["name"],
-            "color": cat.get("color", "#999999"),
-            "priority": cat.get("priority", 10),
-            "widget_count": len(cat.get("widgets", []))
-        }
-        for cat in categories
-    ]
-
-
-@api_v1.get("/widgets/all", tags=["Widgets"])
-async def get_all_widgets():
-    """Get all categories with their widgets (for frontend toolbox)."""
-    discovered = get_discovered_widgets()
-    return discovered
-
-
-@api_v1.get("/widgets/{widget_id}", tags=["Widgets"])
-async def get_widget(widget_id: str):
-    """Get widget description by ID."""
-    discovered = get_discovered_widgets()
-    widgets = discovered.get("widgets", [])
-    
-    for widget in widgets:
-        if widget.get("id") == widget_id:
-            return widget
-    
-    raise HTTPException(status_code=404, detail="Widget not found")
-
-
-@api_v1.post("/widgets/check-compatibility", tags=["Widgets"])
-async def check_compatibility(source_types: List[str], sink_types: List[str]):
-    """Check channel compatibility between source and sink types."""
-    # Simple compatibility check (can be enhanced later)
-    # For now, Data type is compatible with Data type
-    compatible = any(
-        st == sk or st == "Any" or sk == "Any"
-        for st in source_types
-        for sk in sink_types
-    )
-    return {"compatible": compatible, "strict": True, "dynamic": False}
-
-
-@api_v1.post("/widgets/refresh", tags=["Widgets"])
-async def refresh_widgets():
-    """Force refresh of widget discovery cache."""
-    global _discovered_widgets
-    _discovered_widgets = None
-    discovered = get_discovered_widgets()
-    return {"message": "Widget cache refreshed", "total": discovered.get("total", 0)}
 
 
 # ============================================================================
@@ -667,23 +566,7 @@ async def load_data_from_url(request: UrlLoadRequest):
 @app.get("/api/widgets")
 async def legacy_widgets():
     """Legacy endpoint for frontend compatibility."""
-    registry = get_registry()
-    if registry and ORANGE_AVAILABLE:
-        categories = registry.list_categories()
-        widgets = registry.list_widgets()
-        
-        # Group widgets by category
-        result = []
-        for cat in categories:
-            cat_widgets = [w for w in widgets if w.get("category") == cat["name"]]
-            result.append({
-                "name": cat["name"],
-                "color": cat.get("background", "#808080"),
-                "widgets": cat_widgets
-            })
-        return {"categories": result}
-    
-    return {"categories": []}
+    return await legacy_widgets_handler()
 
 
 # ============================================================================
@@ -702,6 +585,9 @@ api_v1.include_router(datasets_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)
+
+# Include Widget Registry Router
+api_v1.include_router(widget_registry_router)
 
 # ============================================================================
 # Include Main Router
