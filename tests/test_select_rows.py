@@ -17,14 +17,10 @@ client = TestClient(app)
 class TestSelectRowsWidget:
     """Test cases for Select Rows widget API endpoints."""
     
-    def test_select_rows_equals(self):
-        """Test row selection with equals condition on numeric variable.
-        
-        Note: Current API does not properly support the '=' operator 
-        for exact value matching. Test validates API returns valid response.
-        """
+    def test_select_rows_equals_numeric(self):
+        """Test row selection with equals condition on numeric variable."""
         request_data = {
-            "data_source": "datasets/iris.tab",
+            "data_source": "iris",
             "conditions": [
                 {
                     "variable": "sepal length",
@@ -42,13 +38,40 @@ class TestSelectRowsWidget:
             assert "matching_count" in data
             assert "unmatched_count" in data
             assert "total_count" in data
+            # sepal length = 5.0 should have specific matches (not all)
+            assert data["matching_count"] < data["total_count"]
+            assert data["matching_count"] > 0
+        elif response.status_code == 503:
+            pytest.skip("Orange3 not available")
+    
+    def test_select_rows_equals_discrete(self):
+        """Test row selection with equals condition on discrete variable."""
+        request_data = {
+            "data_source": "iris",
+            "conditions": [
+                {
+                    "variable": "iris",
+                    "operator": "is",
+                    "value": "Iris-setosa"
+                }
+            ]
+        }
+        
+        response = client.post("/api/v1/data/select-rows", json=request_data)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            assert "matching_count" in data
+            # Iris-setosa has 50 instances
+            assert data["matching_count"] == 50
         elif response.status_code == 503:
             pytest.skip("Orange3 not available")
     
     def test_select_rows_greater_than(self):
         """Test row selection with greater than condition."""
         request_data = {
-            "data_source": "datasets/iris.tab",
+            "data_source": "iris",
             "conditions": [
                 {
                     "variable": "sepal length",
@@ -64,11 +87,13 @@ class TestSelectRowsWidget:
             data = response.json()
             assert "matching_count" in data
             assert data["matching_count"] > 0
+            # Should be less than total (not all sepal lengths > 5.0)
+            assert data["matching_count"] < 150
     
     def test_select_rows_between(self):
         """Test row selection with between condition."""
         request_data = {
-            "data_source": "datasets/iris.tab",
+            "data_source": "iris",
             "conditions": [
                 {
                     "variable": "sepal length",
@@ -85,11 +110,12 @@ class TestSelectRowsWidget:
             data = response.json()
             assert "matching_count" in data
             assert data["matching_count"] > 0
+            assert data["matching_count"] < 150
     
     def test_select_rows_multiple_conditions(self):
         """Test row selection with multiple conditions."""
         request_data = {
-            "data_source": "datasets/iris.tab",
+            "data_source": "iris",
             "conditions": [
                 {
                     "variable": "sepal length",
@@ -109,11 +135,13 @@ class TestSelectRowsWidget:
         if response.status_code == 200:
             data = response.json()
             assert "matching_count" in data
+            # Multiple conditions should filter more
+            assert data["matching_count"] < 150
     
     def test_select_rows_no_conditions(self):
         """Test row selection with no conditions (all rows match)."""
         request_data = {
-            "data_source": "datasets/iris.tab",
+            "data_source": "iris",
             "conditions": []
         }
         

@@ -105,25 +105,45 @@ async def select_rows(request: SelectRowsRequest):
             
             if isinstance(var, ContinuousVariable):
                 try:
-                    float_val = float(val) if val else None
-                    float_val2 = float(val2) if val2 else None
+                    float_val = float(val) if val is not None else None
+                    float_val2 = float(val2) if val2 is not None else None
                 except (ValueError, TypeError):
                     continue
                 
+                # Support both symbol and word-based operators
                 op_map = {
+                    # Symbol operators
+                    '=': FilterContinuous.Equal,
+                    '==': FilterContinuous.Equal,
+                    '!=': FilterContinuous.NotEqual,
+                    '<>': FilterContinuous.NotEqual,
+                    '<': FilterContinuous.Less,
+                    '<=': FilterContinuous.LessEqual,
+                    '≤': FilterContinuous.LessEqual,
+                    '>': FilterContinuous.Greater,
+                    '>=': FilterContinuous.GreaterEqual,
+                    '≥': FilterContinuous.GreaterEqual,
+                    # Word operators
                     'equals': FilterContinuous.Equal,
+                    'equal': FilterContinuous.Equal,
                     'not_equals': FilterContinuous.NotEqual,
+                    'not_equal': FilterContinuous.NotEqual,
                     'less': FilterContinuous.Less,
+                    'less_than': FilterContinuous.Less,
                     'less_equal': FilterContinuous.LessEqual,
+                    'less_or_equal': FilterContinuous.LessEqual,
                     'greater': FilterContinuous.Greater,
+                    'greater_than': FilterContinuous.Greater,
                     'greater_equal': FilterContinuous.GreaterEqual,
+                    'greater_or_equal': FilterContinuous.GreaterEqual,
                     'between': FilterContinuous.Between,
                     'outside': FilterContinuous.Outside,
-                    'is_defined': FilterContinuous.IsDefined
+                    'is_defined': FilterContinuous.IsDefined,
+                    'defined': FilterContinuous.IsDefined,
                 }
                 
                 if op in op_map:
-                    if op == 'is_defined':
+                    if op in ['is_defined', 'defined']:
                         filters.append(data_filter.FilterContinuous(var_idx, op_map[op]))
                     elif op in ['between', 'outside']:
                         if float_val is not None and float_val2 is not None:
@@ -134,15 +154,31 @@ async def select_rows(request: SelectRowsRequest):
                             var_idx, op_map[op], float_val))
                             
             elif isinstance(var, DiscreteVariable):
-                if op == 'is_defined':
+                # Support both symbol and word-based operators for discrete
+                if op in ['is_defined', 'defined']:
                     filters.append(data_filter.FilterDiscrete(var_idx, None))
-                elif op == 'equals' and val:
-                    filters.append(data_filter.FilterDiscrete(var_idx, {val}))
-                elif op == 'not_equals' and val:
-                    other_vals = set(var.values) - {val}
-                    filters.append(data_filter.FilterDiscrete(var_idx, other_vals))
+                elif op in ['equals', 'equal', '=', '==', 'is'] and val is not None:
+                    # Convert value to index if it's a string
+                    if isinstance(val, str) and val in var.values:
+                        val_idx = var.values.index(val)
+                        filters.append(data_filter.FilterDiscrete(var_idx, [val_idx]))
+                    elif isinstance(val, int):
+                        filters.append(data_filter.FilterDiscrete(var_idx, [val]))
+                    else:
+                        # Try direct string match
+                        filters.append(data_filter.FilterDiscrete(var_idx, [val]))
+                elif op in ['not_equals', 'not_equal', '!=', '<>', 'is_not'] and val is not None:
+                    if isinstance(val, str) and val in var.values:
+                        val_idx = var.values.index(val)
+                        other_indices = [i for i in range(len(var.values)) if i != val_idx]
+                        filters.append(data_filter.FilterDiscrete(var_idx, other_indices))
+                    else:
+                        other_vals = [i for i, v in enumerate(var.values) if v != val]
+                        filters.append(data_filter.FilterDiscrete(var_idx, other_vals))
                 elif op == 'in' and isinstance(val, list):
-                    filters.append(data_filter.FilterDiscrete(var_idx, set(val)))
+                    indices = [var.values.index(v) for v in val if v in var.values]
+                    if indices:
+                        filters.append(data_filter.FilterDiscrete(var_idx, indices))
                     
             elif isinstance(var, StringVariable):
                 op_map = {
