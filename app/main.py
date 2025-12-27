@@ -72,6 +72,8 @@ from .widgets import (
     naive_bayes_router,
     logistic_regression_router,
     random_forest_router,
+    predictions_router,
+    test_and_score_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
 from .routes import (
@@ -591,6 +593,8 @@ api_v1.include_router(tree_router)
 api_v1.include_router(naive_bayes_router)
 api_v1.include_router(logistic_regression_router)
 api_v1.include_router(random_forest_router)
+api_v1.include_router(predictions_router)
+api_v1.include_router(test_and_score_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)
