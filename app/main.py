@@ -68,6 +68,10 @@ from .widgets import (
     data_sampler_router,
     datasets_router,
     knn_router,
+    tree_router,
+    naive_bayes_router,
+    logistic_regression_router,
+    random_forest_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
 from .routes import (
@@ -583,6 +587,10 @@ api_v1.include_router(file_upload_router)
 api_v1.include_router(data_sampler_router)
 api_v1.include_router(datasets_router)
 api_v1.include_router(knn_router)
+api_v1.include_router(tree_router)
+api_v1.include_router(naive_bayes_router)
+api_v1.include_router(logistic_regression_router)
+api_v1.include_router(random_forest_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)
