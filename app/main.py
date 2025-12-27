@@ -13,7 +13,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPExcept
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 import os
-import shutil
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Database and locks
 from .database import init_db, close_db, get_db, async_session_maker
-from .locks import lock_workflow, lock_tenant, workflow_locks
+# Locks moved to routes/workflow.py
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import adapters that wrap existing Orange3 code
@@ -71,6 +70,12 @@ from .widgets import (
     datasets_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
+from .routes import (
+    workflow_router,
+    websocket_endpoint as workflow_ws_endpoint,
+    get_workflow_adapters,
+)
+from .routes.workflow import set_registry_getter, set_websocket_manager
 
 
 # ============================================================================
@@ -79,11 +84,6 @@ from .widgets.file_upload import UPLOAD_DIR
 
 tenant_manager = TenantManager()
 websocket_manager = WebSocketManager()
-
-# In-memory workflow adapters (for Orange3 widget instances)
-# Key: tenant_id:workflow_id -> OrangeSchemeAdapter
-# Protected by workflow_locks
-_workflow_adapters: Dict[str, Any] = {}
 
 # Widget registry (singleton, read-only after initialization)
 _registry: Optional[Any] = None
@@ -101,42 +101,6 @@ def get_registry():
             _registry = None
         _registry_initialized = True
     return _registry
-
-
-async def get_workflow_adapter(tenant_id: str, workflow_id: str) -> Optional[Any]:
-    """Get workflow adapter with lock protection."""
-    key = f"{tenant_id}:{workflow_id}"
-    return _workflow_adapters.get(key)
-
-
-async def create_workflow_adapter(tenant_id: str, workflow_id: str) -> Any:
-    """Create a new workflow adapter with lock protection."""
-    key = f"{tenant_id}:{workflow_id}"
-    
-    async with lock_workflow(workflow_id):
-        if key in _workflow_adapters:
-            return _workflow_adapters[key]
-        
-        if ORANGE_AVAILABLE:
-            registry = get_registry()
-            adapter = OrangeSchemeAdapter(registry=registry.registry if registry else None)
-        else:
-            # Fallback to simple dict-based storage
-            adapter = {"nodes": [], "links": [], "annotations": [], "title": "", "description": ""}
-        
-        _workflow_adapters[key] = adapter
-        return adapter
-
-
-async def delete_workflow_adapter(tenant_id: str, workflow_id: str) -> bool:
-    """Delete workflow adapter with lock protection."""
-    key = f"{tenant_id}:{workflow_id}"
-    
-    async with lock_workflow(workflow_id):
-        if key in _workflow_adapters:
-            del _workflow_adapters[key]
-            return True
-        return False
 
 
 # ============================================================================
@@ -181,6 +145,10 @@ async def lifespan(app: FastAPI):
         categories = registry.list_categories()
         widgets = registry.list_widgets()
         print(f"\n📊 Discovered {len(widgets)} widgets in {len(categories)} categories")
+    
+    # Setup workflow router dependencies
+    set_registry_getter(get_registry)
+    set_websocket_manager(websocket_manager)
     
     print("\n🔒 Async locks enabled for concurrent access protection")
     
@@ -414,364 +382,6 @@ async def refresh_widgets():
     _discovered_widgets = None
     discovered = get_discovered_widgets()
     return {"message": "Widget cache refreshed", "total": discovered.get("total", 0)}
-
-
-# ============================================================================
-# Workflow CRUD (uses existing Scheme class + async locks)
-# ============================================================================
-
-@api_v1.get("/workflows", tags=["Workflows"])
-async def list_workflows(tenant: Tenant = Depends(get_current_tenant)):
-    """List all workflows for tenant."""
-    result = []
-    
-    # Find all workflows for this tenant
-    for key, adapter in _workflow_adapters.items():
-        if key.startswith(f"{tenant.id}:"):
-            workflow_id = key.split(":", 1)[1]
-            
-            if ORANGE_AVAILABLE and hasattr(adapter, 'get_workflow_dict'):
-                data = adapter.get_workflow_dict()
-                result.append({
-                    "id": workflow_id,
-                    "title": data.get("title", ""),
-                    "description": data.get("description", ""),
-                    "node_count": len(data.get("nodes", [])),
-                    "link_count": len(data.get("links", []))
-                })
-            else:
-                result.append({
-                    "id": workflow_id,
-                    "title": adapter.get("title", "") if isinstance(adapter, dict) else "",
-                    "node_count": len(adapter.get("nodes", [])) if isinstance(adapter, dict) else 0,
-                    "link_count": len(adapter.get("links", [])) if isinstance(adapter, dict) else 0
-                })
-    
-    return result
-
-
-@api_v1.post("/workflows", tags=["Workflows"])
-async def create_workflow(data: WorkflowCreate, tenant: Tenant = Depends(get_current_tenant)):
-    """Create a new workflow. Creates a new Scheme instance."""
-    workflow_id = str(uuid.uuid4())
-    
-    async with lock_tenant(tenant.id):
-        adapter = await create_workflow_adapter(tenant.id, workflow_id)
-        
-        if ORANGE_AVAILABLE and hasattr(adapter, 'scheme'):
-            adapter.scheme.title = data.title
-            adapter.scheme.description = data.description
-        elif isinstance(adapter, dict):
-            adapter["title"] = data.title
-            adapter["description"] = data.description
-    
-    return {"id": workflow_id, "title": data.title, "description": data.description}
-
-
-@api_v1.get("/workflows/{workflow_id}", tags=["Workflows"])
-async def get_workflow(workflow_id: str, tenant: Tenant = Depends(get_current_tenant)):
-    """Get workflow details. Returns the full Scheme structure."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    if ORANGE_AVAILABLE and hasattr(adapter, 'get_workflow_dict'):
-        data = adapter.get_workflow_dict()
-        data["id"] = workflow_id
-        return data
-    elif isinstance(adapter, dict):
-        return {"id": workflow_id, **adapter}
-    
-    raise HTTPException(status_code=500, detail="Invalid workflow state")
-
-
-@api_v1.delete("/workflows/{workflow_id}", tags=["Workflows"])
-async def delete_workflow(workflow_id: str, tenant: Tenant = Depends(get_current_tenant)):
-    """Delete a workflow."""
-    deleted = await delete_workflow_adapter(tenant.id, workflow_id)
-    if deleted:
-        return {"message": "Workflow deleted"}
-    raise HTTPException(status_code=404, detail="Workflow not found")
-
-
-@api_v1.get("/workflows/{workflow_id}/export", tags=["Workflows"])
-async def export_workflow(workflow_id: str, tenant: Tenant = Depends(get_current_tenant)):
-    """Export workflow as .ows. Uses existing scheme_to_ows_stream function."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    if ORANGE_AVAILABLE and hasattr(adapter, 'export_to_ows'):
-        ows_content = adapter.export_to_ows()
-        return Response(
-            content=ows_content,
-            media_type="application/xml",
-            headers={"Content-Disposition": f"attachment; filename=workflow.ows"}
-        )
-    
-    raise HTTPException(status_code=501, detail="Export not available")
-
-
-# ============================================================================
-# Node CRUD (uses existing SchemeNode class + async locks)
-# ============================================================================
-
-class NodeCreateRequest(BaseModel):
-    widget_id: str
-    title: str
-    x: float
-    y: float
-
-
-@api_v1.post("/workflows/{workflow_id}/nodes", tags=["Nodes"])
-async def add_node(
-    workflow_id: str,
-    node: NodeCreateRequest,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Add a node. Uses existing SchemeNode class."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'add_node'):
-            try:
-                result = adapter.add_node(
-                    widget_id=node.widget_id,
-                    title=node.title,
-                    position=(node.x, node.y)
-                )
-                
-                # Broadcast to WebSocket
-                await websocket_manager.broadcast_to_workflow(
-                    workflow_id,
-                    {"type": "node_added", "data": result}
-                )
-                
-                return result
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e))
-        
-        # Fallback
-        fallback_node = {
-            "id": str(uuid.uuid4()),
-            "widget_id": node.widget_id,
-            "title": node.title,
-            "position": {"x": node.x, "y": node.y}
-        }
-        if isinstance(adapter, dict):
-            adapter.setdefault("nodes", []).append(fallback_node)
-        return fallback_node
-
-
-@api_v1.delete("/workflows/{workflow_id}/nodes/{node_id}", tags=["Nodes"])
-async def delete_node(
-    workflow_id: str,
-    node_id: str,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Delete a node. Uses existing Scheme.remove_node method."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'remove_node'):
-            if adapter.remove_node(node_id):
-                await websocket_manager.broadcast_to_workflow(
-                    workflow_id,
-                    {"type": "node_removed", "data": {"node_id": node_id}}
-                )
-                return {"message": "Node deleted"}
-    
-    raise HTTPException(status_code=404, detail="Node not found")
-
-
-class NodePositionUpdate(BaseModel):
-    x: float
-    y: float
-
-
-@api_v1.put("/workflows/{workflow_id}/nodes/{node_id}/position", tags=["Nodes"])
-async def update_node_position(
-    workflow_id: str,
-    node_id: str,
-    position: NodePositionUpdate,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Update node position."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'update_node_position'):
-            if adapter.update_node_position(node_id, (position.x, position.y)):
-                return {"message": "Position updated"}
-    
-    raise HTTPException(status_code=404, detail="Node not found")
-
-
-# ============================================================================
-# Link CRUD (uses existing SchemeLink class + async locks)
-# ============================================================================
-
-class LinkCreateRequest(BaseModel):
-    source_node_id: str
-    source_channel: str
-    sink_node_id: str
-    sink_channel: str
-
-
-@api_v1.post("/workflows/{workflow_id}/links", tags=["Links"])
-async def add_link(
-    workflow_id: str,
-    link: LinkCreateRequest,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Add a link. Uses existing SchemeLink class and compatible_channels function."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'add_link'):
-            result = adapter.add_link(
-                source_node_id=link.source_node_id,
-                source_channel=link.source_channel,
-                sink_node_id=link.sink_node_id,
-                sink_channel=link.sink_channel
-            )
-            if result:
-                await websocket_manager.broadcast_to_workflow(
-                    workflow_id,
-                    {"type": "link_added", "data": result}
-                )
-                return result
-            raise HTTPException(status_code=400, detail="Cannot create link")
-        
-        # Fallback
-        fallback_link = {
-            "id": str(uuid.uuid4()),
-            **link.model_dump()
-        }
-        if isinstance(adapter, dict):
-            adapter.setdefault("links", []).append(fallback_link)
-        return fallback_link
-
-
-@api_v1.delete("/workflows/{workflow_id}/links/{link_id}", tags=["Links"])
-async def delete_link(
-    workflow_id: str,
-    link_id: str,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Delete a link. Uses existing Scheme.remove_link method."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'remove_link'):
-            if adapter.remove_link(link_id):
-                await websocket_manager.broadcast_to_workflow(
-                    workflow_id,
-                    {"type": "link_removed", "data": {"link_id": link_id}}
-                )
-                return {"message": "Link deleted"}
-    
-    raise HTTPException(status_code=404, detail="Link not found")
-
-
-# ============================================================================
-# Annotations (uses existing SchemeAnnotation classes + async locks)
-# ============================================================================
-
-class TextAnnotationCreate(BaseModel):
-    x: float
-    y: float
-    width: float
-    height: float
-    content: str
-    content_type: str = "text/plain"
-
-
-@api_v1.post("/workflows/{workflow_id}/annotations/text", tags=["Annotations"])
-async def add_text_annotation(
-    workflow_id: str,
-    annotation: TextAnnotationCreate,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Add text annotation. Uses existing SchemeTextAnnotation class."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'add_text_annotation'):
-            result = adapter.add_text_annotation(
-                rect=(annotation.x, annotation.y, annotation.width, annotation.height),
-                content=annotation.content,
-                content_type=annotation.content_type
-            )
-            return result
-    
-    raise HTTPException(status_code=501, detail="Annotations not available")
-
-
-class ArrowAnnotationCreate(BaseModel):
-    start_x: float
-    start_y: float
-    end_x: float
-    end_y: float
-    color: str = "#808080"
-
-
-@api_v1.post("/workflows/{workflow_id}/annotations/arrow", tags=["Annotations"])
-async def add_arrow_annotation(
-    workflow_id: str,
-    annotation: ArrowAnnotationCreate,
-    tenant: Tenant = Depends(get_current_tenant)
-):
-    """Add arrow annotation. Uses existing SchemeArrowAnnotation class."""
-    adapter = await get_workflow_adapter(tenant.id, workflow_id)
-    if not adapter:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    async with lock_workflow(workflow_id):
-        if ORANGE_AVAILABLE and hasattr(adapter, 'add_arrow_annotation'):
-            result = adapter.add_arrow_annotation(
-                start_pos=(annotation.start_x, annotation.start_y),
-                end_pos=(annotation.end_x, annotation.end_y),
-                color=annotation.color
-            )
-            return result
-    
-    raise HTTPException(status_code=501, detail="Annotations not available")
-
-
-# ============================================================================
-# WebSocket
-# ============================================================================
-
-@app.websocket("/api/v1/workflows/{workflow_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
-    """WebSocket for real-time updates."""
-    await websocket_manager.connect(websocket, workflow_id)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            # Broadcast to other clients
-            await websocket_manager.broadcast_to_workflow(
-                workflow_id,
-                message,
-                exclude=websocket
-            )
-    except WebSocketDisconnect:
-        websocket_manager.disconnect(websocket, workflow_id)
 
 
 # ============================================================================
@@ -1090,11 +700,20 @@ api_v1.include_router(file_upload_router)
 api_v1.include_router(data_sampler_router)
 api_v1.include_router(datasets_router)
 
+# Include Workflow Router
+api_v1.include_router(workflow_router)
+
 # ============================================================================
 # Include Main Router
 # ============================================================================
 
 app.include_router(api_v1)
+
+# WebSocket endpoint (registered directly on app, not api_v1)
+@app.websocket("/api/v1/workflows/{workflow_id}/ws")
+async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
+    """WebSocket for real-time updates."""
+    await workflow_ws_endpoint(websocket, workflow_id)
 
 
 if __name__ == "__main__":
