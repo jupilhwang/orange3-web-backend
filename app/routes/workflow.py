@@ -12,9 +12,9 @@ from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisco
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from ..locks import lock_workflow, lock_tenant
-from ..tenant import Tenant, get_current_tenant
-from ..websocket_manager import WebSocketManager
+from ..core import lock_workflow, lock_tenant, get_current_tenant
+from ..models import Tenant
+from ..managers import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ router = APIRouter(tags=["Workflows"])
 
 # Check Orange3 availability
 try:
-    from ..orange_adapter import OrangeSchemeAdapter, OrangeRegistryAdapter
+    from ..adapters import OrangeSchemeAdapter, OrangeRegistryAdapter
     ORANGE_AVAILABLE = True
 except ImportError:
     ORANGE_AVAILABLE = False

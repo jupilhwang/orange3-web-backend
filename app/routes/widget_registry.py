@@ -15,7 +15,7 @@ router = APIRouter(prefix="/widgets", tags=["Widgets"])
 
 # Check Orange3 availability
 try:
-    from ..orange_adapter import OrangeRegistryAdapter, ORANGE3_AVAILABLE
+    from ..adapters import OrangeRegistryAdapter, ORANGE3_AVAILABLE
     ORANGE_AVAILABLE = ORANGE3_AVAILABLE
 except ImportError:
     ORANGE_AVAILABLE = False
@@ -25,7 +25,7 @@ _registry_getter = None
 
 # Widget discovery module
 try:
-    from ..widget_discovery import discover_widgets
+    from ..adapters import discover_widgets
     DISCOVERY_AVAILABLE = True
 except ImportError:
     DISCOVERY_AVAILABLE = False

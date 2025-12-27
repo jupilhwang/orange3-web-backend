@@ -24,14 +24,13 @@ from pydantic import BaseModel
 # Setup logging
 logger = logging.getLogger(__name__)
 
-# Database and locks
-from .database import init_db, close_db, get_db, async_session_maker
-# Locks moved to routes/workflow.py
+# Database and locks (from core/)
+from .core import init_db, close_db, get_db, async_session_maker
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Import adapters that wrap existing Orange3 code
+# Import adapters that wrap existing Orange3 code (from adapters/)
 try:
-    from .orange_adapter import (
+    from .adapters import (
         OrangeSchemeAdapter, OrangeRegistryAdapter, 
         get_availability, ORANGE3_AVAILABLE
     )
@@ -53,9 +52,9 @@ from .models import (
     WidgetDescription, WidgetCategory,
     Position, Rect, Tenant
 )
-from .tenant import TenantManager, get_current_tenant
-from .websocket_manager import WebSocketManager
-# widget_discovery moved to routes/widget_registry.py
+# Managers (from core/ and managers/)
+from .core import TenantManager, get_current_tenant
+from .managers import WebSocketManager
 
 # Widget API routers
 from .widgets import (
