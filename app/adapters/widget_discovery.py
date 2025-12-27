@@ -311,8 +311,8 @@ class WidgetDiscovery:
             elif 'Report' in base_name and 'Widget' in base_name:
                 pass  # No default IO
             
-            # Learner widgets
-            elif 'Learner' in base_name and 'Widget' in base_name:
+            # Learner widgets (OWBaseLearner, OWLearnerWidget, etc.)
+            elif 'Learner' in base_name or 'BaseLearner' in base_name:
                 inherited['inputs'].append({'id': 'data', 'name': 'Data', 'type': 'Data'})
                 inherited['inputs'].append({'id': 'preprocessor', 'name': 'Preprocessor', 'type': 'Preprocessor'})
                 inherited['outputs'].append({'id': 'learner', 'name': 'Learner', 'type': 'Learner'})
