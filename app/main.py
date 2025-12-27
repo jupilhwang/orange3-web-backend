@@ -68,6 +68,7 @@ from .widgets import (
     file_upload_router,
     data_sampler_router,
     datasets_router,
+    knn_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
 from .routes import (
@@ -582,6 +583,7 @@ api_v1.include_router(select_rows_router)
 api_v1.include_router(file_upload_router)
 api_v1.include_router(data_sampler_router)
 api_v1.include_router(datasets_router)
+api_v1.include_router(knn_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)

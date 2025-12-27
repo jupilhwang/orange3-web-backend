@@ -15,6 +15,7 @@ from .select_rows import router as select_rows_router
 from .file_upload import router as file_upload_router
 from .data_sampler import router as data_sampler_router
 from .datasets import router as datasets_router
+from .knn import router as knn_router
 
 __all__ = [
     "scatter_plot_router",
@@ -26,5 +27,6 @@ __all__ = [
     "file_upload_router",
     "data_sampler_router",
     "datasets_router",
+    "knn_router",
 ]
 
