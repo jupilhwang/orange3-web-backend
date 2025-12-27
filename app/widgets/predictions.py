@@ -84,17 +84,17 @@ async def make_predictions(request: PredictRequest) -> PredictResponse:
         # Import model storage from other widgets
         from .knn import _knn_models
         from .tree import _tree_models
-        from .naive_bayes import _naive_bayes_models
-        from .logistic_regression import _logistic_regression_models
-        from .random_forest import _random_forest_models
+        from .naive_bayes import _nb_models
+        from .logistic_regression import _lr_models
+        from .random_forest import _rf_models
         
         # Collect all model storages
         all_models = {
             **_knn_models,
             **_tree_models,
-            **_naive_bayes_models,
-            **_logistic_regression_models,
-            **_random_forest_models
+            **_nb_models,
+            **_lr_models,
+            **_rf_models
         }
         
         # Load data
