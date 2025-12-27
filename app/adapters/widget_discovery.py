@@ -164,6 +164,10 @@ class WidgetDiscovery:
                         icon = icon_prefix + icon.replace('icons/', '')
                     
                     # Add widget to category
+                    # Sort ports to prioritize Data type (most commonly used)
+                    inputs = self._sort_ports_by_priority(widget_info.get('inputs', []))
+                    outputs = self._sort_ports_by_priority(widget_info.get('outputs', []))
+                    
                     widget_data = {
                         'id': self._generate_widget_id(widget_info['name']),
                         'name': widget_info['name'],
@@ -171,8 +175,8 @@ class WidgetDiscovery:
                         'icon': icon,
                         'category': widget_category,
                         'priority': widget_info.get('priority', 9999),
-                        'inputs': widget_info.get('inputs', []),
-                        'outputs': widget_info.get('outputs', []),
+                        'inputs': inputs,
+                        'outputs': outputs,
                         'keywords': widget_info.get('keywords', []),
                         'source': 'orange3-text' if icon_prefix else 'orange3',
                     }
@@ -463,6 +467,28 @@ class WidgetDiscovery:
             'Document': 'Document',
         }
         return type_map.get(type_name, type_name)
+    
+    def _sort_ports_by_priority(self, ports: List[Dict]) -> List[Dict]:
+        """
+        Sort ports to prioritize Data type (most commonly connected).
+        Priority order: Data > Corpus > other types
+        """
+        if not ports:
+            return ports
+        
+        # Define type priority (lower = higher priority)
+        type_priority = {
+            'Data': 0,
+            'Corpus': 1,
+            'Learner': 2,
+            'Model': 3,
+        }
+        
+        def get_priority(port):
+            port_type = port.get('type', '')
+            return type_priority.get(port_type, 99)
+        
+        return sorted(ports, key=get_priority)
     
     def _get_constant_value(self, node) -> Optional[str]:
         """Get constant value from AST node."""
