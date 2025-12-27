@@ -255,15 +255,16 @@ class WidgetDiscovery:
                                 info['outputs'] = self._extract_io_class(item, 'Output')
                     
                     # Merge inherited IO with extracted IO (inherited first, then widget-specific)
+                    # Use reversed() to maintain original order when inserting at position 0
                     if inherited_io['inputs']:
                         existing_ids = {p['id'] for p in info['inputs']}
-                        for inp in inherited_io['inputs']:
+                        for inp in reversed(inherited_io['inputs']):
                             if inp['id'] not in existing_ids:
                                 info['inputs'].insert(0, inp)
                     
                     if inherited_io['outputs']:
                         existing_ids = {p['id'] for p in info['outputs']}
-                        for outp in inherited_io['outputs']:
+                        for outp in reversed(inherited_io['outputs']):
                             if outp['id'] not in existing_ids:
                                 info['outputs'].insert(0, outp)
                     
