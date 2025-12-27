@@ -145,6 +145,8 @@ class WidgetDiscovery:
                 widget_info = self._extract_widget_info(filepath, subdir)
                 
                 if widget_info and widget_info.get('name'):
+                    # Add special inputs for Evaluate widgets (Learner, Model)
+                    self._add_evaluate_widget_inputs(widget_info)
                     # Determine category (widget may override)
                     widget_category = widget_info.get('category') or cat_info['name']
                     
@@ -324,6 +326,35 @@ class WidgetDiscovery:
                 inherited['outputs'].append({'id': 'model', 'name': 'Model', 'type': 'Model'})
         
         return inherited
+    
+    def _add_evaluate_widget_inputs(self, widget_info: Dict) -> None:
+        """Add Learner/Model inputs for Evaluate category widgets that need them."""
+        widget_name = widget_info.get('name', '').lower()
+        inputs = widget_info.get('inputs', [])
+        input_ids = {inp.get('id') for inp in inputs}
+        
+        # Test and Score widget needs Learner input
+        if 'test' in widget_name and 'score' in widget_name:
+            if 'learner' not in input_ids:
+                # Insert Learner input after Data, before Preprocessor
+                learner_input = {'id': 'learner', 'name': 'Learner', 'type': 'Learner', 'multiple': True}
+                # Find position after Data
+                insert_pos = 0
+                for i, inp in enumerate(inputs):
+                    if inp.get('type') == 'Data':
+                        insert_pos = i + 1
+                inputs.insert(insert_pos, learner_input)
+        
+        # Predictions widget needs Predictors (Model) input
+        elif 'prediction' in widget_name:
+            if 'predictors' not in input_ids and 'model' not in input_ids:
+                # Insert Predictors (Model) input after Data
+                predictors_input = {'id': 'predictors', 'name': 'Predictors', 'type': 'Model', 'multiple': True}
+                insert_pos = 0
+                for i, inp in enumerate(inputs):
+                    if inp.get('type') == 'Data':
+                        insert_pos = i + 1
+                inputs.insert(insert_pos, predictors_input)
     
     def _extract_assign(self, item: ast.Assign, info: Dict):
         """Extract info from simple assignment."""
