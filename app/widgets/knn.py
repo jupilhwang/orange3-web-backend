@@ -5,7 +5,6 @@ K-Nearest Neighbors classification and regression.
 
 import logging
 from typing import List, Optional
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -22,9 +21,6 @@ try:
     ORANGE_AVAILABLE = True
 except ImportError:
     ORANGE_AVAILABLE = False
-
-# Upload directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
 
 
 class KNNRequest(BaseModel):
@@ -49,17 +45,6 @@ class KNNResponse(BaseModel):
 # In-memory storage for trained models
 _knn_models = {}
 _knn_learners = {}
-
-
-def resolve_data_path(data_path: str) -> str:
-    """Resolve data path to actual file path."""
-    if data_path.startswith("uploads/"):
-        return str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-    elif data_path.startswith("datasets/"):
-        # Built-in Orange3 datasets
-        dataset_name = data_path.replace("datasets/", "").split(".")[0]
-        return dataset_name
-    return data_path
 
 
 @router.post("/knn/train")
@@ -190,7 +175,12 @@ async def train_knn(
 
 
 @router.post("/knn/predict")
-async def predict_knn(model_id: str, data_path: str, selected_indices: Optional[List[int]] = None):
+async def predict_knn(
+    model_id: str,
+    data_path: str,
+    selected_indices: Optional[List[int]] = None,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Predict using a trained kNN model.
     """
@@ -203,9 +193,12 @@ async def predict_knn(model_id: str, data_path: str, selected_indices: Optional[
     try:
         model = _knn_models[model_id]
         
-        # Load data
-        resolved_path = resolve_data_path(data_path)
-        data = Table(resolved_path)
+        # Load data using common utility
+        from .data_utils import load_data
+        data = load_data(data_path, session_id=x_session_id)
+        
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")
         
         # Filter by selected indices if provided
         if selected_indices and len(selected_indices) > 0:

@@ -7,10 +7,11 @@ Based on Orange3's OWTestAndScore widget.
 import logging
 import uuid
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
+
+from .data_utils import load_data
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,6 @@ try:
     ORANGE_AVAILABLE = True
 except ImportError:
     ORANGE_AVAILABLE = False
-
-# Upload directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
 
 # In-memory storage for evaluation results
 _evaluation_cache: Dict[str, Any] = {}
@@ -81,16 +79,6 @@ class EvaluateResponse(BaseModel):
     target_variable: Optional[str] = None
     is_classification: bool = True
     error: Optional[str] = None
-
-
-def resolve_data_path(data_path: str) -> str:
-    """Resolve data path to actual file path."""
-    if data_path.startswith("uploads/"):
-        return str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-    elif data_path.startswith("datasets/"):
-        dataset_name = data_path.replace("datasets/", "").split(".")[0]
-        return dataset_name
-    return data_path
 
 
 def create_learner(config: Dict[str, Any]):
@@ -200,8 +188,12 @@ async def evaluate_models(
                     success=False,
                     error="Test data path required for test_on_test"
                 )
-            test_data_path = resolve_data_path(request.test_data_path)
-            test_data = Table(test_data_path)
+            test_data = load_data(request.test_data_path, session_id=x_session_id)
+            if test_data is None:
+                return EvaluateResponse(
+                    success=False,
+                    error=f"Test data not found: {request.test_data_path}"
+                )
             
             # Use TestOnTestData
             evaluator = TestOnTestData(store_data=True, store_models=True)

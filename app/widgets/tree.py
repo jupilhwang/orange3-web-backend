@@ -6,7 +6,6 @@ Decision Tree for classification and regression.
 import logging
 import uuid
 from typing import Optional, Dict, Any
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -26,19 +25,6 @@ except ImportError:
 # Model storage
 _tree_models: Dict[str, Any] = {}
 _tree_learners: Dict[str, Any] = {}
-
-# Upload directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
-
-
-def resolve_data_path(data_path: str) -> str:
-    """Resolve data path to loadable format."""
-    if data_path.startswith("uploads/"):
-        return str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-    elif data_path.startswith("datasets/"):
-        return data_path.replace("datasets/", "").split(".")[0]
-    return data_path
-
 
 class TreeTrainRequest(BaseModel):
     """Request model for Tree training."""

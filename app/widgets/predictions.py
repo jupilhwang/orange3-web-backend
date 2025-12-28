@@ -7,7 +7,6 @@ Based on Orange3's OWPredictions widget.
 import logging
 import uuid
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -24,9 +23,6 @@ try:
     ORANGE_AVAILABLE = True
 except ImportError:
     ORANGE_AVAILABLE = False
-
-# Upload directory
-UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
 
 # In-memory storage for predictions
 _predictions_cache: Dict[str, Any] = {}
@@ -51,16 +47,6 @@ class PredictResponse(BaseModel):
     target_values: Optional[List[str]] = None
     instances: int = 0
     error: Optional[str] = None
-
-
-def resolve_data_path(data_path: str) -> str:
-    """Resolve data path to actual file path."""
-    if data_path.startswith("uploads/"):
-        return str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-    elif data_path.startswith("datasets/"):
-        dataset_name = data_path.replace("datasets/", "").split(".")[0]
-        return dataset_name
-    return data_path
 
 
 @router.post("/predictions/predict")
