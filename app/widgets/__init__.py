@@ -27,6 +27,9 @@ from .random_forest import router as random_forest_router
 from .predictions import router as predictions_router
 from .test_and_score import router as test_and_score_router
 
+# Import widget routers - Unsupervised
+from .kmeans import router as kmeans_router
+
 __all__ = [
     # Data widgets
     "scatter_plot_router",
@@ -47,5 +50,7 @@ __all__ = [
     # Evaluate widgets
     "predictions_router",
     "test_and_score_router",
+    # Unsupervised widgets
+    "kmeans_router",
 ]
 
