@@ -86,9 +86,12 @@ async def train_logistic_regression(request: LogisticRegressionTrainRequest):
         raise HTTPException(status_code=503, detail="Orange3 not available")
     
     try:
-        # Load data
-        data_path = resolve_data_path(request.data_path)
-        data = Table(data_path)
+        # Load data using common utility
+        from .data_utils import load_data
+        data = load_data(request.data_path)
+        
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
         
         if data is None or len(data) == 0:
             return LogisticRegressionTrainResponse(

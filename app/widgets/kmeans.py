@@ -121,9 +121,12 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
                 detail=f"Invalid init method. Must be one of: {valid_init_methods}"
             )
         
-        # Load data
-        data_path = resolve_data_path(request.data_path)
-        data = Table(data_path)
+        # Load data using common utility (supports sampler, kmeans, uploads, datasets)
+        from .data_utils import load_data
+        data = load_data(request.data_path)
+        
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
         
         # Filter by selected indices if provided
         if request.selected_indices and len(request.selected_indices) > 0:
@@ -140,6 +143,8 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
             data_for_clustering = data
         
         # Determine number of clusters
+        silhouette_scores = []  # List of {k, score} for range mode
+        
         if request.use_fixed:
             k = request.n_clusters
             silhouette = None
@@ -154,20 +159,23 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
                 if k_test >= len(data):
                     break
                     
-                kmeans = KMeans(
+                kmeans_test = KMeans(
                     n_clusters=k_test,
                     init=request.init_method,
                     n_init=request.n_init,
                     max_iter=request.max_iter
                 )
                 
-                # Get cluster assignments
-                clusters = kmeans(data_for_clustering)
-                cluster_labels = clusters(data_for_clustering).X[:, 0]
+                # Get cluster assignments - KMeans returns cluster labels directly
+                cluster_labels_test = kmeans_test(data_for_clustering)
                 
                 # Calculate silhouette score
-                if len(np.unique(cluster_labels)) > 1:
-                    score = silhouette_score(data_for_clustering.X, cluster_labels)
+                if len(np.unique(cluster_labels_test)) > 1:
+                    score = silhouette_score(data_for_clustering.X, cluster_labels_test)
+                    silhouette_scores.append({
+                        "k": k_test,
+                        "score": round(score, 3)
+                    })
                     if score > best_score:
                         best_score = score
                         best_k = k_test
@@ -187,12 +195,8 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
             max_iter=request.max_iter
         )
         
-        # Fit and transform
-        clusters = kmeans(data_for_clustering)
-        
-        # Get cluster assignments for original data
-        cluster_assignments = clusters(data_for_clustering)
-        cluster_labels = cluster_assignments.X[:, 0].astype(int)
+        # Fit and get cluster labels - KMeans returns cluster labels directly
+        cluster_labels = kmeans(data_for_clustering).astype(int)
         
         # Create annotated data with cluster column
         cluster_var = DiscreteVariable(
@@ -219,7 +223,6 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
             "data": annotated_data,
             "original_data": data,
             "model": kmeans,
-            "clusters": clusters,
             "k": k,
             "cluster_labels": cluster_labels
         }
@@ -243,6 +246,11 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
         
         if silhouette is not None:
             cluster_info["silhouette_score"] = round(silhouette, 4)
+        
+        # Add silhouette scores for range mode
+        if silhouette_scores:
+            cluster_info["silhouette_scores"] = silhouette_scores
+            cluster_info["best_k"] = k
         
         return KMeansResponse(
             success=True,

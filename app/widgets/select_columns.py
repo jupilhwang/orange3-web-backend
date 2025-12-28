@@ -71,13 +71,12 @@ async def select_columns(request: SelectColumnsRequest):
                 "variables": len(request.features) + len(request.target) + len(request.metas)
             }
         
-        if data_path.startswith("uploads/"):
-            data_path = str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-        elif data_path.startswith("datasets/"):
-            dataset_name = data_path.replace("datasets/", "").split(".")[0]
-            data_path = dataset_name
+        # Load data using common utility
+        from .data_utils import load_data as load_data_util
+        original_data = load_data_util(data_path)
         
-        original_data = Table(data_path)
+        if original_data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")
         
         all_vars = {}
         for var in original_data.domain.attributes:

@@ -88,9 +88,12 @@ async def train_random_forest(request: RandomForestTrainRequest):
                 error="Number of estimators must be at least 1"
             )
         
-        # Load data
-        data_path = resolve_data_path(request.data_path)
-        data = Table(data_path)
+        # Load data using common utility
+        from .data_utils import load_data
+        data = load_data(request.data_path)
+        
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
         
         if data is None or len(data) == 0:
             return RandomForestTrainResponse(

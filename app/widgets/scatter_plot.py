@@ -49,10 +49,15 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
     try:
         from Orange.data import Table
         import numpy as np
+        from .data_utils import load_data
         
-        # Load data
-        data = Table(request.data_path)
+        # Load data (supports datasets, uploads, kmeans results)
+        logger.info(f"Loading scatter plot data from: {request.data_path}")
+        data = load_data(request.data_path)
+        if data is None:
+            raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         original_len = len(data)
+        logger.info(f"Loaded data: {len(data)} instances, domain: {data.domain}")
         
         # Filter by selected indices if provided
         if request.selected_indices and len(request.selected_indices) > 0:
@@ -96,19 +101,43 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
             else:
                 categorical_vars.append(var)
         
-        # Determine axis variables
-        axis_x_name = request.axis_x or (numeric_vars[0].name if len(numeric_vars) > 0 else None)
-        axis_y_name = request.axis_y or (numeric_vars[1].name if len(numeric_vars) > 1 else numeric_vars[0].name if len(numeric_vars) > 0 else None)
+        # Determine axis variables - fallback to available vars if requested ones not found
+        default_x = numeric_vars[0].name if len(numeric_vars) > 0 else None
+        default_y = numeric_vars[1].name if len(numeric_vars) > 1 else default_x
+        
+        axis_x_name = request.axis_x if request.axis_x else default_x
+        axis_y_name = request.axis_y if request.axis_y else default_y
+        
+        # Validate that requested axis variables exist in data
+        all_var_names = [v.name for v in list(data.domain.attributes) + 
+                         ([data.domain.class_var] if data.domain.class_var else []) +
+                         list(data.domain.metas)]
+        
+        # If requested axis_x doesn't exist, use default
+        if axis_x_name and axis_x_name not in all_var_names:
+            logger.warning(f"Requested axis_x '{axis_x_name}' not found, using default '{default_x}'")
+            axis_x_name = default_x
+        
+        # If requested axis_y doesn't exist, use default  
+        if axis_y_name and axis_y_name not in all_var_names:
+            logger.warning(f"Requested axis_y '{axis_y_name}' not found, using default '{default_y}'")
+            axis_y_name = default_y
         
         if not axis_x_name or not axis_y_name:
             raise HTTPException(status_code=400, detail="Not enough numeric variables for scatter plot")
         
-        # Find variable objects
+        # Find variable objects (include metas for k-Means results)
         axis_x_var = None
         axis_y_var = None
         color_var = None
         
-        for var in list(data.domain.attributes) + ([data.domain.class_var] if data.domain.class_var else []):
+        all_vars = list(data.domain.attributes) + \
+                   ([data.domain.class_var] if data.domain.class_var else []) + \
+                   list(data.domain.metas)
+        
+        logger.info(f"Looking for axis_x={axis_x_name}, axis_y={axis_y_name} in {[v.name for v in all_vars]}")
+        
+        for var in all_vars:
             if var.name == axis_x_name:
                 axis_x_var = var
             if var.name == axis_y_name:
@@ -116,8 +145,19 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
             if request.color_attr and var.name == request.color_attr:
                 color_var = var
         
+        # If color_attr is "Cluster" (from k-Means), try to find it in metas
+        if request.color_attr and not color_var:
+            for var in data.domain.metas:
+                if var.name == request.color_attr:
+                    color_var = var
+                    break
+        
         if not axis_x_var or not axis_y_var:
-            raise HTTPException(status_code=400, detail="Specified axis variables not found")
+            available = [v.name for v in all_vars]
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Axis variables not found. Looking for x={axis_x_name}, y={axis_y_name}. Available: {available}"
+            )
         
         # Get data values
         x_col = data.get_column(axis_x_var)
@@ -139,7 +179,13 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
             for i, cls in enumerate(class_names):
                 class_colors[cls] = colors[i % len(colors)]
         
-        color_col = data.get_column(color_var) if color_var else None
+        # Get color column (may be in metas for k-Means Cluster)
+        color_col = None
+        if color_var:
+            try:
+                color_col = data.get_column(color_var)
+            except Exception as e:
+                logger.warning(f"Could not get color column: {e}")
         
         for i in range(len(data)):
             if not valid_mask[i]:
@@ -213,9 +259,11 @@ async def select_scatter_plot_data(request: ScatterPlotSelectionRequest):
         raise HTTPException(status_code=501, detail="Orange3 not available")
     
     try:
-        from Orange.data import Table
+        from .data_utils import load_data
         
-        data = Table(request.data_path)
+        data = load_data(request.data_path)
+        if data is None:
+            raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         
         if not request.selected_indices:
             return {"selected_count": 0, "data": None}

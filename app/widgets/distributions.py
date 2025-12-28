@@ -52,21 +52,15 @@ async def get_distributions(request: DistributionsRequest):
         import numpy as np
         from scipy.stats import norm, rayleigh, beta, gamma, pareto, expon
         
-        # Load data
+        # Load data (supports datasets, uploads, kmeans results)
+        from .data_utils import load_data
+        
         data = None
         if request.data_path:
-            data_path = request.data_path
-            if data_path.startswith("datasets/"):
-                dataset_name = data_path.replace("datasets/", "").replace(".tab", "")
-                try:
-                    data = Table(dataset_name)
-                except:
-                    data = Table(data_path)
-            else:
-                data = Table(data_path)
+            data = load_data(request.data_path)
         
         if data is None:
-            raise HTTPException(status_code=400, detail="No data provided")
+            raise HTTPException(status_code=400, detail=f"No data provided or failed to load: {request.data_path}")
         
         # Filter by selected indices if provided
         original_len = len(data)

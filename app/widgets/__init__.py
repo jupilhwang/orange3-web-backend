@@ -30,6 +30,9 @@ from .test_and_score import router as test_and_score_router
 # Import widget routers - Unsupervised
 from .kmeans import router as kmeans_router
 
+# Import utility routers
+from .data_info import router as data_info_router
+
 __all__ = [
     # Data widgets
     "scatter_plot_router",
@@ -52,5 +55,7 @@ __all__ = [
     "test_and_score_router",
     # Unsupervised widgets
     "kmeans_router",
+    # Utility routers
+    "data_info_router",
 ]
 

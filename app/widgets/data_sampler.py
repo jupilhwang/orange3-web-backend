@@ -3,7 +3,9 @@ Data Sampler Widget API endpoints.
 """
 
 import logging
+import uuid
 from pathlib import Path
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -22,6 +24,9 @@ except ImportError:
 
 # Upload directory
 UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
+
+# In-memory storage for sampled data
+_sampler_results = {}
 
 
 class SampleDataRequest(BaseModel):
@@ -52,24 +57,20 @@ async def sample_data(request: SampleDataRequest):
         return calculate_sample_fallback(request)
     
     try:
-        from Orange.data import Table
         import numpy as np
         import math
+        from .data_utils import load_data
         
         # Constants
         RANDOM_SEED = 42
         FixedProportion, FixedSize, CrossValidation, Bootstrap = range(4)
         
-        # Resolve data path
-        data_path = request.data_path
-        if data_path.startswith("uploads/"):
-            data_path = str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-        elif data_path.startswith("datasets/"):
-            dataset_name = data_path.replace("datasets/", "").split(".")[0]
-            data_path = dataset_name
+        # Load data using common utility
+        data = load_data(request.data_path)
         
-        # Load data
-        data = Table(data_path)
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
+        
         data_length = len(data)
         
         if data_length == 0:
@@ -120,6 +121,30 @@ async def sample_data(request: SampleDataRequest):
         sample_count = len(sample_indices) if sample_indices is not None else 0
         remaining_count = len(remaining_indices) if remaining_indices is not None else 0
         
+        # Create sample and remaining data subsets
+        sample_data = data[sample_indices] if sample_indices is not None and len(sample_indices) > 0 else None
+        remaining_data = data[remaining_indices] if remaining_indices is not None and len(remaining_indices) > 0 else None
+        
+        # Generate unique IDs and store in memory
+        sample_id = str(uuid.uuid4())[:8]
+        remaining_id = str(uuid.uuid4())[:8]
+        
+        if sample_data is not None:
+            _sampler_results[f"sample_{sample_id}"] = {
+                "data": sample_data,
+                "original_path": request.data_path,
+                "type": "sample"
+            }
+        
+        if remaining_data is not None:
+            _sampler_results[f"remaining_{remaining_id}"] = {
+                "data": remaining_data,
+                "original_path": request.data_path,
+                "type": "remaining"
+            }
+        
+        logger.info(f"Data sampling complete: sample={sample_count}, remaining={remaining_count}")
+        
         return {
             "success": True,
             "sample_count": sample_count,
@@ -127,7 +152,9 @@ async def sample_data(request: SampleDataRequest):
             "total_count": data_length,
             "sampling_type": request.sampling_type,
             "sample_indices": sample_indices.tolist() if sample_indices is not None else [],
-            "remaining_indices": remaining_indices.tolist() if remaining_indices is not None else []
+            "remaining_indices": remaining_indices.tolist() if remaining_indices is not None else [],
+            "sample_path": f"sampler/sample_{sample_id}" if sample_data is not None else None,
+            "remaining_path": f"sampler/remaining_{remaining_id}" if remaining_data is not None else None
         }
         
     except HTTPException:

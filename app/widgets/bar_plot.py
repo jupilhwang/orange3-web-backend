@@ -47,34 +47,14 @@ async def get_barplot_data(request: BarPlotRequest):
     try:
         from Orange.data import Table
         import numpy as np
+        from .data_utils import load_data
         
-        # Load dataset
+        # Load dataset (supports datasets, uploads, kmeans results)
         dataset_path = request.dataset_path
-        
-        # Handle different path formats
-        if dataset_path.startswith('/'):
-            data = Table(dataset_path)
-        elif 'datasets/' in dataset_path or dataset_path.endswith('.tab') or dataset_path.endswith('.csv'):
-            try:
-                data = Table(dataset_path)
-            except:
-                possible_paths = [
-                    Path(dataset_path),
-                    DATASETS_CACHE_DIR / dataset_path,
-                    Path("datasets") / dataset_path,
-                ]
-                data = None
-                for p in possible_paths:
-                    if p.exists():
-                        data = Table(str(p))
-                        break
-                if data is None:
-                    raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_path}")
-        else:
-            data = Table(dataset_path)
+        data = load_data(dataset_path)
         
         if data is None:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {request.dataset_path}")
+            raise HTTPException(status_code=404, detail=f"Dataset not found or failed to load: {dataset_path}")
         
         original_len = len(data)
         
@@ -91,15 +71,24 @@ async def get_barplot_data(request: BarPlotRequest):
             data = data[:MAX_INSTANCES]
             truncated = True
         
-        # Find value variable (must be continuous)
+        # Find value variable (must be continuous) - check all domains including metas
         value_var = None
-        for var in list(data.domain.attributes) + ([data.domain.class_var] if data.domain.class_var else []):
+        all_vars = list(data.domain.attributes) + ([data.domain.class_var] if data.domain.class_var else []) + list(data.domain.metas)
+        
+        logger.info(f"BarPlot: Looking for value_var '{request.value_var}' among {len(all_vars)} variables")
+        logger.info(f"BarPlot: Available continuous vars: {[v.name for v in all_vars if v.is_continuous][:10]}...")
+        
+        for var in all_vars:
             if var.name == request.value_var and var.is_continuous:
                 value_var = var
                 break
         
         if value_var is None:
-            raise HTTPException(status_code=400, detail=f"Continuous variable '{request.value_var}' not found")
+            available_continuous = [v.name for v in all_vars if v.is_continuous][:20]
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Continuous variable '{request.value_var}' not found. Available: {available_continuous}"
+            )
         
         # Find group variable (discrete, optional)
         group_var = None

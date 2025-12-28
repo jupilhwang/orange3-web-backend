@@ -75,6 +75,7 @@ from .widgets import (
     predictions_router,
     test_and_score_router,
     kmeans_router,
+    data_info_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
 from .routes import (
@@ -597,6 +598,7 @@ api_v1.include_router(random_forest_router)
 api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
 api_v1.include_router(kmeans_router)
+api_v1.include_router(data_info_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)

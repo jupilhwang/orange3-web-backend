@@ -59,33 +59,14 @@ async def get_heatmap_data(request: HeatMapRequest):
     try:
         from Orange.data import Table
         import numpy as np
+        from .data_utils import load_data
         
-        # Load dataset
+        # Load dataset (supports datasets, uploads, kmeans results)
         data_path = request.data_path
-        
-        if data_path.startswith('/'):
-            data = Table(data_path)
-        elif 'datasets/' in data_path or data_path.endswith('.tab') or data_path.endswith('.csv'):
-            try:
-                data = Table(data_path)
-            except:
-                possible_paths = [
-                    Path(data_path),
-                    DATASETS_CACHE_DIR / data_path,
-                    Path("datasets") / data_path,
-                ]
-                data = None
-                for p in possible_paths:
-                    if p.exists():
-                        data = Table(str(p))
-                        break
-                if data is None:
-                    raise HTTPException(status_code=404, detail=f"Dataset not found: {data_path}")
-        else:
-            data = Table(data_path)
+        data = load_data(data_path)
         
         if data is None:
-            raise HTTPException(status_code=404, detail=f"Dataset not found: {request.data_path}")
+            raise HTTPException(status_code=404, detail=f"Dataset not found or failed to load: {data_path}")
         
         original_len = len(data)
         
