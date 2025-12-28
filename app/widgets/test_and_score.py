@@ -9,7 +9,7 @@ import uuid
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,10 @@ def create_learner(config: Dict[str, Any]):
 
 
 @router.post("/test_and_score/evaluate")
-async def evaluate_models(request: EvaluateRequest) -> EvaluateResponse:
+async def evaluate_models(
+    request: EvaluateRequest,
+    x_session_id: Optional[str] = Header(None)
+) -> EvaluateResponse:
     """
     Evaluate models using various resampling methods.
     
@@ -137,7 +140,8 @@ async def evaluate_models(request: EvaluateRequest) -> EvaluateResponse:
     try:
         # Load data using common utility
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading Test and Score data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

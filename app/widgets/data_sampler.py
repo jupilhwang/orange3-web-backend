@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,10 @@ class SampleDataRequest(BaseModel):
 
 
 @router.post("/sample")
-async def sample_data(request: SampleDataRequest):
+async def sample_data(
+    request: SampleDataRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Sample data using Orange3's sampling algorithms.
     
@@ -66,7 +69,8 @@ async def sample_data(request: SampleDataRequest):
         FixedProportion, FixedSize, CrossValidation, Bootstrap = range(4)
         
         # Load data using common utility
-        data = load_data(request.data_path)
+        logger.info(f"Loading data for sampling from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
@@ -129,19 +133,33 @@ async def sample_data(request: SampleDataRequest):
         sample_id = str(uuid.uuid4())[:8]
         remaining_id = str(uuid.uuid4())[:8]
         
+        # Store results using session-based storage if available
+        from .data_utils import DataSessionManager
+        
+        sample_path = f"sampler/sample_{sample_id}" if sample_data is not None else None
+        remaining_path = f"sampler/remaining_{remaining_id}" if remaining_data is not None else None
+        
         if sample_data is not None:
-            _sampler_results[f"sample_{sample_id}"] = {
-                "data": sample_data,
-                "original_path": request.data_path,
-                "type": "sample"
-            }
+            if x_session_id:
+                DataSessionManager.store(x_session_id, sample_path, sample_data)
+                logger.debug(f"Stored sample data in session {x_session_id}: {sample_path}")
+            else:
+                _sampler_results[f"sample_{sample_id}"] = {
+                    "data": sample_data,
+                    "original_path": request.data_path,
+                    "type": "sample"
+                }
         
         if remaining_data is not None:
-            _sampler_results[f"remaining_{remaining_id}"] = {
-                "data": remaining_data,
-                "original_path": request.data_path,
-                "type": "remaining"
-            }
+            if x_session_id:
+                DataSessionManager.store(x_session_id, remaining_path, remaining_data)
+                logger.debug(f"Stored remaining data in session {x_session_id}: {remaining_path}")
+            else:
+                _sampler_results[f"remaining_{remaining_id}"] = {
+                    "data": remaining_data,
+                    "original_path": request.data_path,
+                    "type": "remaining"
+                }
         
         logger.info(f"Data sampling complete: sample={sample_count}, remaining={remaining_count}")
         
@@ -153,8 +171,8 @@ async def sample_data(request: SampleDataRequest):
             "sampling_type": request.sampling_type,
             "sample_indices": sample_indices.tolist() if sample_indices is not None else [],
             "remaining_indices": remaining_indices.tolist() if remaining_indices is not None else [],
-            "sample_path": f"sampler/sample_{sample_id}" if sample_data is not None else None,
-            "remaining_path": f"sampler/remaining_{remaining_id}" if remaining_data is not None else None
+            "sample_path": sample_path,
+            "remaining_path": remaining_path
         }
         
     except HTTPException:

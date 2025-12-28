@@ -5,7 +5,7 @@ Distributions Widget API endpoints.
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,10 @@ class DistributionsRequest(BaseModel):
 
 
 @router.post("/distributions")
-async def get_distributions(request: DistributionsRequest):
+async def get_distributions(
+    request: DistributionsRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Calculate distribution data for a variable.
     Returns histogram data, statistics, and fitted curve if requested.
@@ -57,7 +60,8 @@ async def get_distributions(request: DistributionsRequest):
         
         data = None
         if request.data_path:
-            data = load_data(request.data_path)
+            logger.info(f"Loading distributions data from: {request.data_path} (session: {x_session_id})")
+            data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=400, detail=f"No data provided or failed to load: {request.data_path}")

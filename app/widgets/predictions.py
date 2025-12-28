@@ -9,7 +9,7 @@ import uuid
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,10 @@ def resolve_data_path(data_path: str) -> str:
 
 
 @router.post("/predictions/predict")
-async def make_predictions(request: PredictRequest) -> PredictResponse:
+async def make_predictions(
+    request: PredictRequest,
+    x_session_id: Optional[str] = Header(None)
+) -> PredictResponse:
     """
     Make predictions using trained models.
     
@@ -99,7 +102,8 @@ async def make_predictions(request: PredictRequest) -> PredictResponse:
         
         # Load data using common utility
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading Predictions data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

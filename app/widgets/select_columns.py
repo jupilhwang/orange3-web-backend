@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,10 @@ class SelectColumnsRequest(BaseModel):
 
 
 @router.post("/select-columns")
-async def select_columns(request: SelectColumnsRequest):
+async def select_columns(
+    request: SelectColumnsRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Select and reorder columns in a dataset.
     
@@ -73,7 +76,8 @@ async def select_columns(request: SelectColumnsRequest):
         
         # Load data using common utility
         from .data_utils import load_data as load_data_util
-        original_data = load_data_util(data_path)
+        logger.info(f"Loading Select Columns data from: {data_path} (session: {x_session_id})")
+        original_data = load_data_util(data_path, session_id=x_session_id)
         
         if original_data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")

@@ -5,7 +5,7 @@ Scatter Plot Widget API endpoints.
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,10 @@ class ScatterPlotSelectionRequest(BaseModel):
 
 
 @router.post("/scatter-plot")
-async def get_scatter_plot_data(request: ScatterPlotRequest):
+async def get_scatter_plot_data(
+    request: ScatterPlotRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """Generate scatter plot data for visualization."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=501, detail="Orange3 not available")
@@ -52,8 +55,8 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
         from .data_utils import load_data
         
         # Load data (supports datasets, uploads, kmeans results)
-        logger.info(f"Loading scatter plot data from: {request.data_path}")
-        data = load_data(request.data_path)
+        logger.info(f"Loading scatter plot data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         original_len = len(data)
@@ -253,7 +256,10 @@ async def get_scatter_plot_data(request: ScatterPlotRequest):
 
 
 @router.post("/scatter-plot/select")
-async def select_scatter_plot_data(request: ScatterPlotSelectionRequest):
+async def select_scatter_plot_data(
+    request: ScatterPlotSelectionRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """Return selected data subset from scatter plot."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=501, detail="Orange3 not available")
@@ -261,7 +267,8 @@ async def select_scatter_plot_data(request: ScatterPlotSelectionRequest):
     try:
         from .data_utils import load_data
         
-        data = load_data(request.data_path)
+        logger.info(f"Loading scatter plot selection from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         

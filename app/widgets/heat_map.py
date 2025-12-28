@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,10 @@ class HeatMapRequest(BaseModel):
 
 
 @router.post("/heatmap")
-async def get_heatmap_data(request: HeatMapRequest):
+async def get_heatmap_data(
+    request: HeatMapRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Generate heatmap data for visualization.
     Similar to Orange3's Heat Map widget.
@@ -63,7 +66,8 @@ async def get_heatmap_data(request: HeatMapRequest):
         
         # Load dataset (supports datasets, uploads, kmeans results)
         data_path = request.data_path
-        data = load_data(data_path)
+        logger.info(f"Loading heatmap data from: {data_path} (session: {x_session_id})")
+        data = load_data(data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found or failed to load: {data_path}")

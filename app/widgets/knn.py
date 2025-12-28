@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,10 @@ def resolve_data_path(data_path: str) -> str:
 
 
 @router.post("/knn/train")
-async def train_knn(request: KNNRequest) -> KNNResponse:
+async def train_knn(
+    request: KNNRequest,
+    x_session_id: Optional[str] = Header(None)
+) -> KNNResponse:
     """
     Train a kNN model.
     
@@ -104,7 +107,8 @@ async def train_knn(request: KNNRequest) -> KNNResponse:
         
         # Load data using common utility (supports sampler, kmeans, uploads, datasets)
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading kNN data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

@@ -5,7 +5,7 @@ Data Info API - provides information about loaded data.
 import logging
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -38,31 +38,38 @@ class DataInfoResponse(BaseModel):
 
 
 @router.get("/info")
-async def get_data_info_get(data_path: str) -> DataInfoResponse:
+async def get_data_info_get(
+    data_path: str,
+    x_session_id: Optional[str] = Header(None)
+) -> DataInfoResponse:
     """
     Get information about a dataset (GET method).
     Supports datasets, uploads, and kmeans results.
     """
-    return await _get_data_info(data_path)
+    return await _get_data_info(data_path, x_session_id)
 
 
 @router.post("/info")
-async def get_data_info_post(request: DataInfoRequest) -> DataInfoResponse:
+async def get_data_info_post(
+    request: DataInfoRequest,
+    x_session_id: Optional[str] = Header(None)
+) -> DataInfoResponse:
     """
     Get information about a dataset (POST method).
     Supports datasets, uploads, and kmeans results.
     """
-    return await _get_data_info(request.data_path)
+    return await _get_data_info(request.data_path, x_session_id)
 
 
-async def _get_data_info(data_path: str) -> DataInfoResponse:
+async def _get_data_info(data_path: str, session_id: Optional[str] = None) -> DataInfoResponse:
     """
     Internal function to get data info.
     """
     try:
         from .data_utils import load_data
         
-        data = load_data(data_path)
+        logger.info(f"Loading data info from: {data_path} (session: {session_id})")
+        data = load_data(data_path, session_id=session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")

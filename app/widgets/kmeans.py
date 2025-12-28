@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,10 @@ def resolve_data_path(data_path: str) -> str:
 
 
 @router.post("/kmeans/cluster")
-async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
+async def cluster_kmeans(
+    request: KMeansRequest,
+    x_session_id: Optional[str] = Header(None)
+) -> KMeansResponse:
     """
     Perform k-Means clustering.
     
@@ -123,7 +126,8 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
         
         # Load data using common utility (supports sampler, kmeans, uploads, datasets)
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        data = load_data(request.data_path, session_id=x_session_id)
+        logger.debug(f"[k-Means] Loading data from {request.data_path} with session_id={x_session_id}")
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
@@ -218,14 +222,24 @@ async def cluster_kmeans(request: KMeansRequest) -> KMeansResponse:
         import uuid
         cluster_id = str(uuid.uuid4())[:8]
         
-        # Store result
-        _kmeans_results[cluster_id] = {
-            "data": annotated_data,
-            "original_data": data,
-            "model": kmeans,
-            "k": k,
-            "cluster_labels": cluster_labels
-        }
+        # Store result in session-based storage (preferred) or legacy storage
+        from .data_utils import DataSessionManager
+        
+        data_path = f"kmeans/{cluster_id}"
+        if x_session_id:
+            # Store in session-based storage
+            DataSessionManager.store(x_session_id, data_path, annotated_data)
+            logger.debug(f"[k-Means] Stored result in session {x_session_id}: {data_path}")
+        else:
+            # Fallback to legacy storage
+            _kmeans_results[cluster_id] = {
+                "data": annotated_data,
+                "original_data": data,
+                "model": kmeans,
+                "k": k,
+                "cluster_labels": cluster_labels
+            }
+            logger.debug(f"[k-Means] Stored result in legacy storage: {cluster_id}")
         
         # Calculate cluster sizes
         unique, counts = np.unique(cluster_labels, return_counts=True)

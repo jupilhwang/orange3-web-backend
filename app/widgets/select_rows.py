@@ -7,7 +7,7 @@ import math
 import os
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,10 @@ class SelectRowsRequest(BaseModel):
 
 
 @router.post("/select-rows")
-async def select_rows(request: SelectRowsRequest):
+async def select_rows(
+    request: SelectRowsRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Filter data rows based on conditions.
     
@@ -54,26 +57,16 @@ async def select_rows(request: SelectRowsRequest):
         from Orange.data import Table, ContinuousVariable, DiscreteVariable, StringVariable
         import Orange.data.filter as data_filter
         from Orange.data.filter import FilterContinuous, FilterString
+        from .data_utils import load_data
         
         data_source = request.data_source
-        data = None
         
-        if data_source.startswith("/") or os.path.exists(data_source):
-            try:
-                data = Table(data_source)
-            except (OSError, FileNotFoundError):
-                pass
+        # Use common data loading utility (supports sampler, kmeans, uploads, datasets)
+        logger.info(f"Loading Select Rows data from: {data_source} (session: {x_session_id})")
+        data = load_data(data_source, session_id=x_session_id)
         
         if data is None:
-            if "/" in data_source:
-                dataset_name = data_source.split("/")[-1].replace(".tab", "")
-            else:
-                dataset_name = data_source.replace(".tab", "")
-            
-            try:
-                data = Table(dataset_name)
-            except (OSError, FileNotFoundError):
-                raise HTTPException(status_code=404, detail=f"Dataset not found: {data_source}")
+            raise HTTPException(status_code=404, detail=f"Data not found: {data_source}")
         
         total_count = len(data)
         

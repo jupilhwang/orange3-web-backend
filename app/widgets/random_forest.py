@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,10 @@ async def get_random_forest_options():
 
 
 @router.post("/random-forest/train", response_model=RandomForestTrainResponse)
-async def train_random_forest(request: RandomForestTrainRequest):
+async def train_random_forest(
+    request: RandomForestTrainRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """Train a Random Forest model."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Orange3 not available")
@@ -90,7 +93,8 @@ async def train_random_forest(request: RandomForestTrainRequest):
         
         # Load data using common utility
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading Random Forest data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

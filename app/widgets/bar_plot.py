@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,10 @@ class BarPlotRequest(BaseModel):
 
 
 @router.post("/barplot")
-async def get_barplot_data(request: BarPlotRequest):
+async def get_barplot_data(
+    request: BarPlotRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
     Generate bar plot data for visualization.
     Similar to Orange3's Bar Plot widget.
@@ -51,7 +54,8 @@ async def get_barplot_data(request: BarPlotRequest):
         
         # Load dataset (supports datasets, uploads, kmeans results)
         dataset_path = request.dataset_path
-        data = load_data(dataset_path)
+        logger.info(f"Loading bar plot data from: {dataset_path} (session: {x_session_id})")
+        data = load_data(dataset_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found or failed to load: {dataset_path}")

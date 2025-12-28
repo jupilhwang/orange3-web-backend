@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,10 @@ async def get_naive_bayes_options():
 
 
 @router.post("/naive-bayes/train", response_model=NaiveBayesTrainResponse)
-async def train_naive_bayes(request: NaiveBayesTrainRequest):
+async def train_naive_bayes(
+    request: NaiveBayesTrainRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """Train a Naive Bayes model."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Orange3 not available")
@@ -70,7 +73,8 @@ async def train_naive_bayes(request: NaiveBayesTrainRequest):
     try:
         # Load data using common utility
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading Naive Bayes data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

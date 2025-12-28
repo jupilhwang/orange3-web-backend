@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,10 @@ async def get_logistic_regression_options():
 
 
 @router.post("/logistic-regression/train", response_model=LogisticRegressionTrainResponse)
-async def train_logistic_regression(request: LogisticRegressionTrainRequest):
+async def train_logistic_regression(
+    request: LogisticRegressionTrainRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """Train a Logistic Regression model."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Orange3 not available")
@@ -88,7 +91,8 @@ async def train_logistic_regression(request: LogisticRegressionTrainRequest):
     try:
         # Load data using common utility
         from .data_utils import load_data
-        data = load_data(request.data_path)
+        logger.info(f"Loading Logistic Regression data from: {request.data_path} (session: {x_session_id})")
+        data = load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
