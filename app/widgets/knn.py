@@ -33,6 +33,7 @@ class KNNRequest(BaseModel):
     n_neighbors: int = 5
     metric: str = "euclidean"  # euclidean, manhattan, chebyshev, mahalanobis
     weights: str = "uniform"   # uniform, distance
+    name: str = "kNN"  # Model name
     selected_indices: Optional[List[int]] = None
 
 
@@ -131,9 +132,11 @@ async def train_knn(request: KNNRequest) -> KNNResponse:
             metric=request.metric,
             weights=request.weights
         )
+        learner.name = request.name
         
         # Train model
         model = learner(data)
+        model.name = request.name
         
         # Generate model ID
         import uuid
@@ -153,6 +156,7 @@ async def train_knn(request: KNNRequest) -> KNNResponse:
         # Model info
         is_classification = not data.domain.class_var.is_continuous
         model_info = {
+            "name": request.name,
             "type": "classification" if is_classification else "regression",
             "training_instances": len(data),
             "features": len(data.domain.attributes),
