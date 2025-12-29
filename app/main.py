@@ -72,6 +72,7 @@ from .widgets import (
     naive_bayes_router,
     logistic_regression_router,
     random_forest_router,
+    linear_regression_router,
     predictions_router,
     test_and_score_router,
     kmeans_router,
@@ -595,6 +596,7 @@ api_v1.include_router(tree_router)
 api_v1.include_router(naive_bayes_router)
 api_v1.include_router(logistic_regression_router)
 api_v1.include_router(random_forest_router)
+api_v1.include_router(linear_regression_router)
 api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
 api_v1.include_router(kmeans_router)

@@ -22,6 +22,7 @@ from .tree import router as tree_router
 from .naive_bayes import router as naive_bayes_router
 from .logistic_regression import router as logistic_regression_router
 from .random_forest import router as random_forest_router
+from .linear_regression import router as linear_regression_router
 
 # Import widget routers - Evaluate
 from .predictions import router as predictions_router
@@ -50,6 +51,7 @@ __all__ = [
     "naive_bayes_router",
     "logistic_regression_router",
     "random_forest_router",
+    "linear_regression_router",
     # Evaluate widgets
     "predictions_router",
     "test_and_score_router",
