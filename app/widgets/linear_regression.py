@@ -42,6 +42,7 @@ class LinearRegressionResponse(BaseModel):
     model_info: Optional[dict] = None
     coefficients: Optional[List[dict]] = None
     error: Optional[str] = None
+    error_type: Optional[str] = None  # For categorizing errors (e.g., 'target_type')
 
 
 # In-memory storage for trained models
@@ -109,16 +110,18 @@ async def train_linear_regression(
             raise HTTPException(status_code=400, detail="No data to train on")
         
         if not data.domain.class_var:
-            raise HTTPException(
-                status_code=400,
-                detail="Data must have a target variable for Linear Regression"
+            return LinearRegressionResponse(
+                success=False,
+                error="Data has no target variable.",
+                error_type="no_target"
             )
         
-        # Check if target is continuous (regression)
+        # Check if target is continuous (regression) - Orange3 standard check
         if data.domain.class_var.is_discrete:
-            raise HTTPException(
-                status_code=400,
-                detail="Linear Regression requires a continuous target variable. Use Logistic Regression for classification."
+            return LinearRegressionResponse(
+                success=False,
+                error="Numeric target variable expected.",
+                error_type="target_type"
             )
         
         # Create learner based on regularization type
