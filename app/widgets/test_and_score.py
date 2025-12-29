@@ -83,21 +83,55 @@ class EvaluateResponse(BaseModel):
 
 def create_learner(config: Dict[str, Any]):
     """Create a learner from configuration."""
-    learner_type = config.get("type", "knn")
+    learner_type = config.get("type", "knn").lower()
     
-    if learner_type == "knn":
+    # Normalize learner type names
+    if learner_type in ("knn", "knn_learner", "k-nearest neighbors"):
         return KNNLearner(
             n_neighbors=config.get("n_neighbors", 5),
             metric=config.get("metric", "euclidean"),
             weights=config.get("weights", "uniform")
         )
-    elif learner_type == "tree":
+    elif learner_type in ("tree", "tree_learner", "decision tree"):
         return TreeLearner(
+            binarize=config.get("binary_trees", True),
             max_depth=config.get("max_depth", None),
-            min_samples_split=config.get("min_samples_split", 2)
+            min_samples_split=config.get("min_samples_split", 5),
+            min_samples_leaf=config.get("min_samples_leaf", 2),
+            sufficient_majority=config.get("sufficient_majority", 0.95)
         )
+    elif learner_type in ("random_forest", "random_forest_learner", "randomforest"):
+        try:
+            from Orange.modelling import RandomForestLearner
+            return RandomForestLearner(
+                n_estimators=config.get("n_estimators", 10),
+                max_features=config.get("max_features", None),
+                max_depth=config.get("max_depth", None),
+                min_samples_split=config.get("min_samples_split", 2)
+            )
+        except ImportError:
+            logger.warning("RandomForestLearner not available, falling back to Tree")
+            return TreeLearner()
+    elif learner_type in ("naive_bayes", "naive_bayes_learner", "naivebayes"):
+        try:
+            from Orange.classification import NaiveBayesLearner
+            return NaiveBayesLearner()
+        except ImportError:
+            logger.warning("NaiveBayesLearner not available, falling back to KNN")
+            return KNNLearner()
+    elif learner_type in ("logistic_regression", "logistic_regression_learner", "logisticregression"):
+        try:
+            from Orange.classification import LogisticRegressionLearner
+            return LogisticRegressionLearner(
+                C=config.get("C", 1.0),
+                penalty=config.get("penalty", "l2")
+            )
+        except ImportError:
+            logger.warning("LogisticRegressionLearner not available, falling back to KNN")
+            return KNNLearner()
     else:
         # Default to KNN
+        logger.warning(f"Unknown learner type: {learner_type}, defaulting to KNN")
         return KNNLearner()
 
 

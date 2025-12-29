@@ -16,6 +16,8 @@ router = APIRouter(prefix="/data", tags=["Data"])
 class DataInfoRequest(BaseModel):
     """Request model for data info."""
     data_path: str
+    include_preview: bool = False
+    preview_rows: int = 100
 
 
 class ColumnInfo(BaseModel):
@@ -35,6 +37,7 @@ class DataInfoResponse(BaseModel):
     columns: List[ColumnInfo]
     target: Optional[str] = None
     metas: int = 0
+    preview: Optional[List[dict]] = None  # Data preview rows
 
 
 @router.get("/info")
@@ -58,17 +61,28 @@ async def get_data_info_post(
     Get information about a dataset (POST method).
     Supports datasets, uploads, and kmeans results.
     """
-    return await _get_data_info(request.data_path, x_session_id)
+    return await _get_data_info(
+        request.data_path, 
+        x_session_id, 
+        include_preview=request.include_preview,
+        preview_rows=request.preview_rows
+    )
 
 
-async def _get_data_info(data_path: str, session_id: Optional[str] = None) -> DataInfoResponse:
+async def _get_data_info(
+    data_path: str, 
+    session_id: Optional[str] = None,
+    include_preview: bool = False,
+    preview_rows: int = 100
+) -> DataInfoResponse:
     """
     Internal function to get data info.
     """
     try:
+        import numpy as np
         from .data_utils import load_data
         
-        logger.info(f"Loading data info from: {data_path} (session: {session_id})")
+        logger.info(f"Loading data info from: {data_path} (session: {session_id}, preview: {include_preview})")
         data = load_data(data_path, session_id=session_id)
         
         if data is None:
@@ -120,6 +134,44 @@ async def _get_data_info(data_path: str, session_id: Optional[str] = None) -> Da
         n_metas = len(data.domain.metas)
         n_cols = n_features + (1 if data.domain.class_var else 0) + n_metas
         
+        # Build preview data if requested
+        preview = None
+        if include_preview:
+            preview = []
+            rows_to_show = min(preview_rows, n_rows)
+            
+            for row_idx in range(rows_to_show):
+                row_data = {}
+                
+                # Attributes
+                for var in data.domain.attributes:
+                    val = data[row_idx][var]
+                    if var.is_continuous:
+                        row_data[var.name] = float(val) if not np.isnan(val) else None
+                    else:
+                        row_data[var.name] = str(val) if val is not None else None
+                
+                # Target
+                if data.domain.class_var:
+                    var = data.domain.class_var
+                    val = data[row_idx][var]
+                    if var.is_continuous:
+                        row_data[var.name] = float(val) if not np.isnan(val) else None
+                    else:
+                        row_data[var.name] = str(val) if val is not None else None
+                
+                # Metas
+                for var in data.domain.metas:
+                    val = data[row_idx][var]
+                    if var.is_continuous:
+                        row_data[var.name] = float(val) if not np.isnan(val) else None
+                    elif var.is_discrete:
+                        row_data[var.name] = str(val) if val is not None else None
+                    else:
+                        row_data[var.name] = str(val) if val else None
+                
+                preview.append(row_data)
+        
         return DataInfoResponse(
             instances=n_rows,
             features=n_features,
@@ -127,7 +179,8 @@ async def _get_data_info(data_path: str, session_id: Optional[str] = None) -> Da
             n_cols=n_cols,
             columns=columns,
             target=target_name,
-            metas=n_metas
+            metas=n_metas,
+            preview=preview
         )
         
     except HTTPException:
