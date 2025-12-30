@@ -87,7 +87,7 @@ from .widgets import (
     word_cloud_router,
     data_info_router,
 )
-from .widgets.file_upload import UPLOAD_DIR
+from .widgets.file_upload import BASE_UPLOAD_DIR
 from .routes import (
     workflow_router,
     websocket_endpoint as workflow_ws_endpoint,
@@ -443,7 +443,7 @@ async def load_data_from_path(path: str):
     
     # Check if it's an uploaded file
     if path.startswith("uploads/"):
-        full_path = UPLOAD_DIR / path.replace("uploads/", "")
+        full_path = BASE_UPLOAD_DIR / path.replace("uploads/", "")
         if full_path.exists():
             path = str(full_path)
     elif path.startswith("datasets/"):
