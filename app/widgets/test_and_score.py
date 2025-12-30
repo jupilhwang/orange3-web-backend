@@ -19,7 +19,7 @@ router = APIRouter(prefix="/evaluate", tags=["Evaluate"])
 
 # Check Orange3 availability
 try:
-    from Orange.data import Table
+    from Orange.data import Table, Domain, DiscreteVariable
     from Orange.evaluation import (
         CrossValidation, ShuffleSplit, LeaveOneOut, 
         TestOnTrainingData, TestOnTestData, Results
@@ -28,6 +28,12 @@ try:
         CA, AUC, F1, Precision, Recall, 
         MAE, MSE, RMSE, R2
     )
+    # Try to import CrossValidationFeature (if available in Orange3)
+    try:
+        from Orange.evaluation import CrossValidationFeature
+        HAS_CV_FEATURE = True
+    except ImportError:
+        HAS_CV_FEATURE = False
     from Orange.modelling import KNNLearner, TreeLearner
     import numpy as np
     ORANGE_AVAILABLE = True
@@ -36,10 +42,13 @@ except ImportError:
 
 # In-memory storage for evaluation results
 _evaluation_cache: Dict[str, Any] = {}
+# Also export as _test_results for confusion_matrix
+_test_results: Dict[str, Any] = _evaluation_cache
 
 # Resampling methods
 RESAMPLING_METHODS = {
     "cross_validation": "Cross Validation",
+    "cross_validation_feature": "Cross Validation by Feature",
     "random_sampling": "Random Sampling", 
     "leave_one_out": "Leave One Out",
     "test_on_train": "Test on Train Data",
@@ -67,6 +76,7 @@ class EvaluateRequest(BaseModel):
     n_repeats: int = 10
     sample_size: int = 66  # percentage
     selected_indices: Optional[List[int]] = None
+    feature_column: Optional[str] = None  # For cross_validation_feature
 
 
 class EvaluateResponse(BaseModel):
@@ -77,6 +87,7 @@ class EvaluateResponse(BaseModel):
     scores: Optional[List[Dict]] = None
     learner_names: Optional[List[str]] = None
     target_variable: Optional[str] = None
+    target_values: Optional[List[str]] = None  # Class values for classification
     is_classification: bool = True
     error: Optional[str] = None
 
@@ -206,6 +217,37 @@ async def evaluate_models(
                 k=request.n_folds,
                 stratified=request.stratified if is_classification else False
             )
+        elif request.resampling == "cross_validation_feature":
+            # Cross validation by feature - group by feature values
+            if HAS_CV_FEATURE and request.feature_column:
+                # Find the feature variable
+                feature_var = None
+                for var in data.domain.attributes:
+                    if var.name == request.feature_column:
+                        feature_var = var
+                        break
+                if feature_var is None:
+                    for var in data.domain.metas:
+                        if var.name == request.feature_column:
+                            feature_var = var
+                            break
+                
+                if feature_var:
+                    sampler = CrossValidationFeature(feature=feature_var)
+                else:
+                    # Fallback to regular CV if feature not found
+                    logger.warning(f"Feature '{request.feature_column}' not found, using regular CV")
+                    sampler = CrossValidation(
+                        k=request.n_folds,
+                        stratified=request.stratified if is_classification else False
+                    )
+            else:
+                # Fallback to regular cross validation
+                logger.warning("CrossValidationFeature not available, using regular CV")
+                sampler = CrossValidation(
+                    k=request.n_folds,
+                    stratified=request.stratified if is_classification else False
+                )
         elif request.resampling == "random_sampling":
             sampler = ShuffleSplit(
                 n_resamples=request.n_repeats,
@@ -283,14 +325,23 @@ async def evaluate_models(
         # Generate evaluation ID
         evaluation_id = str(uuid.uuid4())[:8]
         
-        # Cache results
+        # Store learner_names on results object for Confusion Matrix
+        results.learner_names = learner_names
+        
+        # Cache results including the Results object for Confusion Matrix
         _evaluation_cache[evaluation_id] = {
             "scores": scores,
             "learner_names": learner_names,
             "resampling": request.resampling,
             "data_path": request.data_path,
-            "is_classification": is_classification
+            "is_classification": is_classification,
+            "results": results  # Store Results object for Confusion Matrix
         }
+        
+        # Get target values for classification
+        target_values = None
+        if is_classification and data.domain.class_var:
+            target_values = [str(v) for v in data.domain.class_var.values]
         
         return EvaluateResponse(
             success=True,
@@ -298,6 +349,7 @@ async def evaluate_models(
             scores=scores,
             learner_names=learner_names,
             target_variable=data.domain.class_var.name,
+            target_values=target_values,
             is_classification=is_classification
         )
         

@@ -330,6 +330,103 @@ async def get_linear_regression_options():
     }
 
 
+@router.get("/linear-regression/coefficients/{model_id}")
+async def get_linear_regression_coefficients(
+    model_id: str,
+    sort_by: str = "name"  # name, coefficient, abs_coefficient
+):
+    """
+    Get detailed coefficient information from a trained Linear Regression model.
+    
+    Parameters:
+    - model_id: ID of the trained model
+    - sort_by: How to sort coefficients (name, coefficient, abs_coefficient)
+    """
+    if not ORANGE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Orange3 not available")
+    
+    if model_id not in _linear_models:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    try:
+        model = _linear_models[model_id]
+        
+        if not hasattr(model, 'skl_model') or not hasattr(model.skl_model, 'coef_'):
+            return {
+                "success": False,
+                "error": "Coefficients not available for this model"
+            }
+        
+        skl_model = model.skl_model
+        coefs = skl_model.coef_
+        
+        # Get feature names
+        if hasattr(model, 'domain'):
+            feature_names = [attr.name for attr in model.domain.attributes]
+        else:
+            feature_names = [f"feature_{i}" for i in range(len(coefs))]
+        
+        # Build coefficient data
+        coefficients = []
+        
+        # Add intercept if exists
+        if hasattr(skl_model, 'intercept_') and skl_model.intercept_ != 0:
+            coefficients.append({
+                "feature": "(intercept)",
+                "coefficient": float(skl_model.intercept_),
+                "abs_coefficient": abs(float(skl_model.intercept_)),
+                "is_intercept": True
+            })
+        
+        for name, coef in zip(feature_names, coefs):
+            coefficients.append({
+                "feature": name,
+                "coefficient": float(coef),
+                "abs_coefficient": abs(float(coef)),
+                "is_intercept": False
+            })
+        
+        # Sort coefficients
+        if sort_by == "coefficient":
+            coefficients.sort(key=lambda x: x["coefficient"], reverse=True)
+        elif sort_by == "abs_coefficient":
+            coefficients.sort(key=lambda x: x["abs_coefficient"], reverse=True)
+        else:
+            # Sort by name, but keep intercept first
+            non_intercept = [c for c in coefficients if not c.get("is_intercept")]
+            intercept = [c for c in coefficients if c.get("is_intercept")]
+            non_intercept.sort(key=lambda x: x["feature"])
+            coefficients = intercept + non_intercept
+        
+        # Calculate statistics
+        coef_values = [c["coefficient"] for c in coefficients if not c.get("is_intercept")]
+        
+        stats = {
+            "n_features": len(coef_values),
+            "mean": float(np.mean(coef_values)) if coef_values else 0,
+            "std": float(np.std(coef_values)) if coef_values else 0,
+            "max": float(max(coef_values)) if coef_values else 0,
+            "min": float(min(coef_values)) if coef_values else 0,
+            "n_positive": sum(1 for c in coef_values if c > 0),
+            "n_negative": sum(1 for c in coef_values if c < 0),
+            "n_zero": sum(1 for c in coef_values if c == 0)
+        }
+        
+        return {
+            "success": True,
+            "model_id": model_id,
+            "coefficients": coefficients,
+            "statistics": stats,
+            "sorted_by": sort_by
+        }
+        
+    except Exception as e:
+        logger.error(f"Coefficients error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
 # Export models dict for predictions widget
 def get_model(model_id: str):
     """Get a trained model by ID."""

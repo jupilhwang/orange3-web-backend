@@ -270,13 +270,48 @@ async def get_distributions(
                         except Exception as fit_error:
                             logger.warning(f"Fitting error: {fit_error}")
             
+            # Kernel Density Estimation (KDE)
+            if request.kde_smoothing > 0:
+                try:
+                    from scipy.stats import gaussian_kde
+                    
+                    # Calculate bandwidth based on kde_smoothing (1-50)
+                    # Lower value = more smoothing, higher = less smoothing
+                    # Convert kde_smoothing to bandwidth factor
+                    bw_factor = max(0.1, request.kde_smoothing / 50.0)
+                    
+                    kde = gaussian_kde(valid_data, bw_method='silverman')
+                    kde.set_bandwidth(kde.factor * bw_factor)
+                    
+                    x_range = np.linspace(np.min(valid_data) - np.std(valid_data) * 0.5,
+                                          np.max(valid_data) + np.std(valid_data) * 0.5, 200)
+                    y_kde = kde(x_range)
+                    
+                    # Scale to match histogram
+                    bin_width = (thresholds[-1] - thresholds[0]) / (len(thresholds) - 1)
+                    y_scaled = y_kde * len(valid_data) * bin_width
+                    
+                    result["kde_curve"] = {
+                        "x": x_range.tolist(),
+                        "y": y_scaled.tolist(),
+                        "bandwidth": float(kde.factor),
+                        "smoothing": request.kde_smoothing
+                    }
+                except Exception as kde_error:
+                    logger.warning(f"KDE error: {kde_error}")
+            
             # Statistics
             result["statistics"] = {
                 "mean": float(np.mean(valid_data)),
                 "std": float(np.std(valid_data)),
                 "min": float(np.min(valid_data)),
                 "max": float(np.max(valid_data)),
-                "median": float(np.median(valid_data))
+                "median": float(np.median(valid_data)),
+                "q1": float(np.percentile(valid_data, 25)),
+                "q3": float(np.percentile(valid_data, 75)),
+                "iqr": float(np.percentile(valid_data, 75) - np.percentile(valid_data, 25)),
+                "skewness": float(((valid_data - np.mean(valid_data)) ** 3).mean() / (np.std(valid_data) ** 3)) if np.std(valid_data) > 0 else 0,
+                "kurtosis": float(((valid_data - np.mean(valid_data)) ** 4).mean() / (np.std(valid_data) ** 4) - 3) if np.std(valid_data) > 0 else 0
             }
         
         return result

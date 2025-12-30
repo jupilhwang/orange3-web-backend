@@ -43,6 +43,7 @@ class LogisticRegressionTrainResponse(BaseModel):
     message: Optional[str] = None
     coefficients: Optional[List[dict]] = None
     error: Optional[str] = None
+    error_type: Optional[str] = None  # target_type, no_target, exception
 
 
 class LogisticRegressionOptionsResponse(BaseModel):
@@ -93,13 +94,15 @@ async def train_logistic_regression(
         if data.domain.class_var is None:
             return LogisticRegressionTrainResponse(
                 success=False,
-                error="Dataset must have a class variable for classification"
+                error="Data has no target variable.",
+                error_type="no_target"
             )
         
         if data.domain.class_var.is_continuous:
             return LogisticRegressionTrainResponse(
                 success=False,
-                error="Logistic Regression is for classification only (discrete target required)"
+                error="Categorical target variable expected.",
+                error_type="target_type"
             )
         
         # Parse penalty
@@ -193,4 +196,138 @@ async def delete_logistic_regression_model(model_id: str):
         del _lr_learners[model_id]
     
     return {"success": True, "message": "Model deleted"}
+
+
+@router.get("/logistic-regression/coefficients/{model_id}")
+async def get_logistic_regression_coefficients(
+    model_id: str,
+    sort_by: str = "name",  # name, coefficient, abs_coefficient
+    class_index: int = 0  # For multi-class, which class coefficients to return
+):
+    """
+    Get detailed coefficient information from a trained Logistic Regression model.
+    
+    Parameters:
+    - model_id: ID of the trained model
+    - sort_by: How to sort coefficients (name, coefficient, abs_coefficient)
+    - class_index: For multi-class classification, which class's coefficients to show
+    """
+    if not ORANGE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Orange3 not available")
+    
+    if model_id not in _lr_models:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    try:
+        import numpy as np
+        
+        model = _lr_models[model_id]
+        model_info = _lr_learners.get(model_id, {})
+        
+        # Try to extract coefficients
+        coefficients = []
+        n_classes = 1
+        class_names = model_info.get("target_values", [])
+        
+        # Get feature names
+        if hasattr(model, 'domain'):
+            feature_names = [attr.name for attr in model.domain.attributes]
+        else:
+            feature_names = [f"feature_{i}" for i in range(model_info.get("features", 0))]
+        
+        # Try different ways to access coefficients
+        coefs = None
+        intercept = None
+        
+        if hasattr(model, 'coefficients'):
+            coefs = model.coefficients
+            if hasattr(model, 'intercept'):
+                intercept = model.intercept
+        elif hasattr(model, 'skl_model'):
+            if hasattr(model.skl_model, 'coef_'):
+                coefs = model.skl_model.coef_
+            if hasattr(model.skl_model, 'intercept_'):
+                intercept = model.skl_model.intercept_
+        
+        if coefs is None:
+            return {
+                "success": False,
+                "error": "Coefficients not available for this model"
+            }
+        
+        # Handle multi-class vs binary
+        if len(coefs.shape) > 1:
+            n_classes = coefs.shape[0]
+            class_coefs = coefs[min(class_index, n_classes - 1)]
+        else:
+            class_coefs = coefs
+        
+        # Add intercept
+        if intercept is not None:
+            if hasattr(intercept, '__len__') and len(intercept) > 0:
+                int_val = float(intercept[min(class_index, len(intercept) - 1)])
+            else:
+                int_val = float(intercept)
+            
+            coefficients.append({
+                "feature": "(intercept)",
+                "coefficient": int_val,
+                "abs_coefficient": abs(int_val),
+                "is_intercept": True,
+                "odds_ratio": np.exp(int_val) if abs(int_val) < 100 else None
+            })
+        
+        # Add feature coefficients
+        for name, coef in zip(feature_names, class_coefs):
+            coef_val = float(coef)
+            coefficients.append({
+                "feature": name,
+                "coefficient": coef_val,
+                "abs_coefficient": abs(coef_val),
+                "is_intercept": False,
+                "odds_ratio": np.exp(coef_val) if abs(coef_val) < 100 else None
+            })
+        
+        # Sort coefficients
+        if sort_by == "coefficient":
+            coefficients.sort(key=lambda x: x["coefficient"], reverse=True)
+        elif sort_by == "abs_coefficient":
+            coefficients.sort(key=lambda x: x["abs_coefficient"], reverse=True)
+        else:
+            # Sort by name, but keep intercept first
+            non_intercept = [c for c in coefficients if not c.get("is_intercept")]
+            intercept_list = [c for c in coefficients if c.get("is_intercept")]
+            non_intercept.sort(key=lambda x: x["feature"])
+            coefficients = intercept_list + non_intercept
+        
+        # Calculate statistics
+        coef_values = [c["coefficient"] for c in coefficients if not c.get("is_intercept")]
+        
+        stats = {
+            "n_features": len(coef_values),
+            "mean": float(np.mean(coef_values)) if coef_values else 0,
+            "std": float(np.std(coef_values)) if coef_values else 0,
+            "max": float(max(coef_values)) if coef_values else 0,
+            "min": float(min(coef_values)) if coef_values else 0,
+            "n_positive": sum(1 for c in coef_values if c > 0),
+            "n_negative": sum(1 for c in coef_values if c < 0),
+            "n_zero": sum(1 for c in coef_values if abs(c) < 1e-10)
+        }
+        
+        return {
+            "success": True,
+            "model_id": model_id,
+            "coefficients": coefficients,
+            "statistics": stats,
+            "n_classes": n_classes,
+            "class_names": class_names,
+            "current_class_index": min(class_index, n_classes - 1),
+            "sorted_by": sort_by
+        }
+        
+    except Exception as e:
+        logger.error(f"Coefficients error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 

@@ -214,11 +214,14 @@ def load_data(data_path: str, session_id: str = None) -> Optional['Table']:
         return None
     
     try:
-        # Session-based data lookup (if session_id provided)
-        if session_id and (data_path.startswith("sampler/") or data_path.startswith("kmeans/")):
-            data = DataSessionManager.get(session_id, data_path)
+        # Session-based data lookup (if session_id provided or special prefix)
+        session_prefixes = ("sampler/", "kmeans/", "confusion_selection_")
+        if data_path.startswith(session_prefixes):
+            # Try session-based lookup first
+            effective_session = session_id or "default"
+            data = DataSessionManager.get(effective_session, data_path)
             if data is not None:
-                logger.debug(f"Loaded from session: {session_id}/{data_path}")
+                logger.debug(f"Loaded from session: {effective_session}/{data_path}")
                 return data
             # Fallback to legacy storage if not found in session
         
@@ -316,4 +319,28 @@ def resolve_data_path(data_path: str) -> str:
         dataset_name = data_path.replace("datasets/", "").split(".")[0]
         return dataset_name
     return data_path
+
+
+def save_data(data_id: str, data: 'Table', session_id: str = None, 
+              ttl: int = None, metadata: dict = None) -> str:
+    """
+    Save data to session storage.
+    
+    This is a convenience wrapper around DataSessionManager.store.
+    
+    Args:
+        data_id: 데이터 ID (예: "confusion_selection_xxx")
+        data: Orange.data.Table 객체
+        session_id: 세션 ID (None이면 기본 세션 사용)
+        ttl: Time-To-Live (초)
+        metadata: 추가 메타데이터
+        
+    Returns:
+        저장된 데이터의 전체 경로 (data_id)
+    """
+    # Use default session if none provided
+    if session_id is None:
+        session_id = "default"
+    
+    return DataSessionManager.store(session_id, data_id, data, ttl, metadata)
 

@@ -193,3 +193,97 @@ async def delete_random_forest_model(model_id: str):
     
     return {"success": True, "message": "Model deleted"}
 
+
+@router.get("/random-forest/feature-importance/{model_id}")
+async def get_feature_importance(model_id: str, top_n: int = 20):
+    """
+    Get detailed feature importance from Random Forest model.
+    
+    Parameters:
+    - model_id: ID of the trained model
+    - top_n: Number of top features to return (default: 20)
+    """
+    if not ORANGE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Orange3 not available")
+    
+    if model_id not in _rf_models:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    try:
+        import numpy as np
+        
+        model = _rf_models[model_id]
+        model_info = _rf_learners.get(model_id, {})
+        
+        # Get feature importances
+        importances = None
+        std = None
+        
+        if hasattr(model, 'skl_model'):
+            skl_model = model.skl_model
+            if hasattr(skl_model, 'feature_importances_'):
+                importances = skl_model.feature_importances_
+                
+                # Calculate std from individual tree importances
+                if hasattr(skl_model, 'estimators_'):
+                    all_importances = np.array([
+                        tree.feature_importances_ 
+                        for tree in skl_model.estimators_
+                    ])
+                    std = np.std(all_importances, axis=0)
+        
+        if importances is None:
+            return {
+                "success": False,
+                "error": "Feature importances not available"
+            }
+        
+        # Get feature names
+        if hasattr(model, 'domain'):
+            feature_names = [attr.name for attr in model.domain.attributes]
+        else:
+            feature_names = [f"feature_{i}" for i in range(len(importances))]
+        
+        # Build feature importance data
+        features = []
+        for i, name in enumerate(feature_names):
+            feature_data = {
+                "feature": name,
+                "importance": float(importances[i]),
+                "rank": 0  # Will be set after sorting
+            }
+            if std is not None:
+                feature_data["std"] = float(std[i])
+            features.append(feature_data)
+        
+        # Sort by importance
+        features.sort(key=lambda x: x["importance"], reverse=True)
+        
+        # Set ranks
+        for i, f in enumerate(features):
+            f["rank"] = i + 1
+        
+        # Limit to top_n
+        top_features = features[:top_n]
+        
+        # Calculate cumulative importance
+        cumulative = 0
+        for f in top_features:
+            cumulative += f["importance"]
+            f["cumulative"] = round(cumulative, 4)
+        
+        return {
+            "success": True,
+            "model_id": model_id,
+            "n_features": len(feature_names),
+            "n_estimators": model_info.get("n_estimators", 0),
+            "features": top_features,
+            "total_importance": round(sum(f["importance"] for f in features), 4)
+        }
+        
+    except Exception as e:
+        logger.error(f"Feature importance error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+

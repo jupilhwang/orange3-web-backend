@@ -27,9 +27,13 @@ from .linear_regression import router as linear_regression_router
 # Import widget routers - Evaluate
 from .predictions import router as predictions_router
 from .test_and_score import router as test_and_score_router
+from .confusion_matrix import router as confusion_matrix_router
 
 # Import widget routers - Unsupervised
 from .kmeans import router as kmeans_router
+
+# Import widget routers - Text Mining
+from .text_mining import router as text_mining_router
 
 # Import utility routers
 from .data_info import router as data_info_router
@@ -55,8 +59,11 @@ __all__ = [
     # Evaluate widgets
     "predictions_router",
     "test_and_score_router",
+    "confusion_matrix_router",
     # Unsupervised widgets
     "kmeans_router",
+    # Text Mining widgets
+    "text_mining_router",
     # Utility routers
     "data_info_router",
 ]

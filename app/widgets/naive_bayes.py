@@ -38,6 +38,7 @@ class NaiveBayesTrainResponse(BaseModel):
     model_id: Optional[str] = None
     message: Optional[str] = None
     error: Optional[str] = None
+    error_type: Optional[str] = None  # target_type, no_target, exception
 
 
 @router.get("/naive-bayes/options")
@@ -75,13 +76,15 @@ async def train_naive_bayes(
         if data.domain.class_var is None:
             return NaiveBayesTrainResponse(
                 success=False,
-                error="Dataset must have a class variable for classification"
+                error="Data has no target variable.",
+                error_type="no_target"
             )
         
         if data.domain.class_var.is_continuous:
             return NaiveBayesTrainResponse(
                 success=False,
-                error="Naive Bayes is for classification only (discrete target required)"
+                error="Categorical target variable expected.",
+                error_type="target_type"
             )
         
         # Create Naive Bayes learner

@@ -75,7 +75,9 @@ from .widgets import (
     linear_regression_router,
     predictions_router,
     test_and_score_router,
+    confusion_matrix_router,
     kmeans_router,
+    text_mining_router,
     data_info_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
@@ -599,7 +601,9 @@ api_v1.include_router(random_forest_router)
 api_v1.include_router(linear_regression_router)
 api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
+api_v1.include_router(confusion_matrix_router)
 api_v1.include_router(kmeans_router)
+api_v1.include_router(text_mining_router)
 api_v1.include_router(data_info_router)
 
 # Include Workflow Router
