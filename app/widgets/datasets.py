@@ -32,18 +32,38 @@ async def fetch_datasets_list():
     # Return cached if available and fresh
     if _datasets_cache and _datasets_cache_time:
         if time.time() - _datasets_cache_time < DATASETS_CACHE_TTL:
+            logger.debug("Using cached datasets list")
             return _datasets_cache
     
     try:
+        import asyncio
         from serverfiles import ServerFiles, LocalFiles
         
-        # Try to fetch remote list
-        client = ServerFiles(server=DATASETS_INDEX_URL)
-        allinfo = client.allinfo()
+        logger.info(f"Fetching datasets from {DATASETS_INDEX_URL}...")
+        
+        # Run blocking operation in executor with timeout
+        def get_server_info():
+            client = ServerFiles(server=DATASETS_INDEX_URL)
+            return client.allinfo()
+        
+        loop = asyncio.get_event_loop()
+        try:
+            allinfo = await asyncio.wait_for(
+                loop.run_in_executor(None, get_server_info),
+                timeout=30.0  # 30 second timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Timeout fetching datasets from server, using fallback")
+            return get_fallback_datasets()
+        
+        logger.info(f"Fetched {len(allinfo)} items from server")
         
         # Also get local cached files
-        local = LocalFiles(str(DATASETS_CACHE_DIR))
-        local_info = local.allinfo()
+        def get_local_info():
+            local = LocalFiles(str(DATASETS_CACHE_DIR))
+            return local.allinfo()
+        
+        local_info = await loop.run_in_executor(None, get_local_info)
         
         datasets = []
         for file_path, info in allinfo.items():
@@ -82,12 +102,14 @@ async def fetch_datasets_list():
         _datasets_cache = datasets
         _datasets_cache_time = time.time()
         
+        logger.info(f"Successfully fetched {len(datasets)} datasets")
         return datasets
         
     except Exception as e:
         logger.error(f"Error fetching datasets: {e}")
         import traceback
         traceback.print_exc()
+        logger.warning("Using fallback datasets")
         return get_fallback_datasets()
 
 
