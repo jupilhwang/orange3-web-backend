@@ -10,35 +10,131 @@ import json
 import re
 import sys
 import site
+import logging
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
+
+def _get_orange3_path_from_import() -> Optional[str]:
+    """Try to get Orange3 widgets path by importing Orange module."""
+    try:
+        import Orange
+        orange_dir = os.path.dirname(Orange.__file__)
+        widgets_path = os.path.join(orange_dir, 'widgets')
+        if os.path.exists(widgets_path):
+            logger.info(f"Found Orange3 widgets via import: {widgets_path}")
+            return widgets_path
+    except ImportError as e:
+        logger.debug(f"Could not import Orange: {e}")
+    except Exception as e:
+        logger.debug(f"Error finding Orange path: {e}")
+    return None
+
+
+def _get_orange3_text_path_from_import() -> Optional[str]:
+    """Try to get Orange3-Text widgets path by importing orangecontrib.text module."""
+    try:
+        import orangecontrib.text
+        text_dir = os.path.dirname(orangecontrib.text.__file__)
+        widgets_path = os.path.join(text_dir, 'widgets')
+        if os.path.exists(widgets_path):
+            logger.info(f"Found Orange3-Text widgets via import: {widgets_path}")
+            return widgets_path
+    except ImportError as e:
+        logger.debug(f"Could not import orangecontrib.text: {e}")
+    except Exception as e:
+        logger.debug(f"Error finding Orange3-Text path: {e}")
+    return None
+
 
 def _get_site_packages_paths() -> List[str]:
-    """Get all possible site-packages paths dynamically."""
+    """
+    Get all possible site-packages paths dynamically.
+    Supports: venv, virtualenv, uv, conda, pyenv, system Python
+    """
     paths = []
+    py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
     
-    # site-packages from site module
-    paths.extend(site.getsitepackages())
+    # 1. From sys.path (most reliable for any environment)
+    for p in sys.path:
+        if 'site-packages' in p and os.path.isdir(p):
+            paths.append(p)
+        elif 'dist-packages' in p and os.path.isdir(p):  # Debian/Ubuntu
+            paths.append(p)
     
-    # User site-packages
-    user_site = site.getusersitepackages()
-    if user_site:
-        paths.append(user_site)
+    # 2. From site module
+    try:
+        for sp in site.getsitepackages():
+            if sp and os.path.isdir(sp):
+                paths.append(sp)
+    except Exception:
+        pass
     
-    # Virtual environment site-packages
+    # 3. User site-packages
+    try:
+        user_site = site.getusersitepackages()
+        if user_site and os.path.isdir(user_site):
+            paths.append(user_site)
+    except Exception:
+        pass
+    
+    # 4. Virtual environment (venv, virtualenv, uv)
     venv_path = os.environ.get('VIRTUAL_ENV')
     if venv_path:
-        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-        paths.append(os.path.join(venv_path, 'lib', py_version, 'site-packages'))
+        # Linux/macOS
+        linux_path = os.path.join(venv_path, 'lib', py_version, 'site-packages')
+        if os.path.isdir(linux_path):
+            paths.append(linux_path)
+        # Windows
+        win_path = os.path.join(venv_path, 'Lib', 'site-packages')
+        if os.path.isdir(win_path):
+            paths.append(win_path)
+        # uv specific (sometimes uses lib64)
+        lib64_path = os.path.join(venv_path, 'lib64', py_version, 'site-packages')
+        if os.path.isdir(lib64_path):
+            paths.append(lib64_path)
     
-    # Conda environment
+    # 5. Conda environment
     conda_prefix = os.environ.get('CONDA_PREFIX')
     if conda_prefix:
-        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-        paths.append(os.path.join(conda_prefix, 'lib', py_version, 'site-packages'))
+        conda_sp = os.path.join(conda_prefix, 'lib', py_version, 'site-packages')
+        if os.path.isdir(conda_sp):
+            paths.append(conda_sp)
     
-    return [p for p in paths if p and os.path.exists(p)]
+    # 6. pyenv
+    pyenv_root = os.environ.get('PYENV_ROOT', os.path.expanduser('~/.pyenv'))
+    if os.path.isdir(pyenv_root):
+        pyenv_version = os.environ.get('PYENV_VERSION')
+        if pyenv_version:
+            pyenv_sp = os.path.join(pyenv_root, 'versions', pyenv_version, 'lib', py_version, 'site-packages')
+            if os.path.isdir(pyenv_sp):
+                paths.append(pyenv_sp)
+    
+    # 7. Current working directory's .venv (common pattern)
+    cwd_venv = os.path.join(os.getcwd(), '.venv', 'lib', py_version, 'site-packages')
+    if os.path.isdir(cwd_venv):
+        paths.append(cwd_venv)
+    
+    # 8. Script directory's .venv
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    for parent in [script_dir] + list(Path(script_dir).parents)[:3]:
+        venv_sp = os.path.join(parent, '.venv', 'lib', py_version, 'site-packages')
+        if os.path.isdir(venv_sp):
+            paths.append(venv_sp)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_paths = []
+    for p in paths:
+        real_p = os.path.realpath(p)
+        if real_p not in seen:
+            seen.add(real_p)
+            unique_paths.append(p)
+    
+    logger.debug(f"Found site-packages paths: {unique_paths}")
+    return unique_paths
 
 
 # Category color definitions from Orange3
@@ -82,38 +178,72 @@ class WidgetDiscovery:
         
     def _find_orange3_path(self) -> Optional[str]:
         """Try to find Orange3 installation path."""
-        # Common locations to check
-        possible_paths = [
-            # Local development
-            os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"),
-        ]
+        # 1. Environment variable (highest priority)
+        env_path = os.environ.get('ORANGE3_WIDGETS_PATH')
+        if env_path and os.path.isdir(env_path):
+            logger.info(f"Using ORANGE3_WIDGETS_PATH: {env_path}")
+            return env_path
+        
+        # 2. Try importing Orange module directly (most reliable)
+        import_path = _get_orange3_path_from_import()
+        if import_path:
+            return import_path
+        
+        # 3. Search in site-packages
+        possible_paths = []
         
         # Add dynamic site-packages paths
         for sp in _get_site_packages_paths():
             possible_paths.append(os.path.join(sp, "Orange", "widgets"))
         
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
+        # Local development paths
+        possible_paths.extend([
+            os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"),
+            os.path.expanduser("~/orange3/Orange/widgets"),
+        ])
         
+        for path in possible_paths:
+            if os.path.isdir(path):
+                # Verify it's a valid widgets directory
+                if os.path.isdir(os.path.join(path, "data")):
+                    logger.info(f"Found Orange3 widgets at: {path}")
+                    return path
+        
+        logger.warning("Orange3 widgets path not found")
         return None
     
     def _find_orange3_text_path(self) -> Optional[str]:
         """Try to find Orange3-Text installation path."""
-        # Common locations to check
-        possible_paths = [
-            # Local development
-            os.path.expanduser("~/works/test/orange3/orange3-text/orangecontrib/text/widgets"),
-        ]
+        # 1. Environment variable (highest priority)
+        env_path = os.environ.get('ORANGE3_TEXT_WIDGETS_PATH')
+        if env_path and os.path.isdir(env_path):
+            logger.info(f"Using ORANGE3_TEXT_WIDGETS_PATH: {env_path}")
+            return env_path
+        
+        # 2. Try importing orangecontrib.text module directly (most reliable)
+        import_path = _get_orange3_text_path_from_import()
+        if import_path:
+            return import_path
+        
+        # 3. Search in site-packages
+        possible_paths = []
         
         # Add dynamic site-packages paths
         for sp in _get_site_packages_paths():
             possible_paths.append(os.path.join(sp, "orangecontrib", "text", "widgets"))
         
+        # Local development paths
+        possible_paths.extend([
+            os.path.expanduser("~/works/test/orange3/orange3-text/orangecontrib/text/widgets"),
+            os.path.expanduser("~/orange3-text/orangecontrib/text/widgets"),
+        ])
+        
         for path in possible_paths:
-            if os.path.exists(path):
+            if os.path.isdir(path):
+                logger.info(f"Found Orange3-Text widgets at: {path}")
                 return path
         
+        logger.warning("Orange3-Text widgets path not found")
         return None
     
     def discover(self) -> Dict[str, Any]:
