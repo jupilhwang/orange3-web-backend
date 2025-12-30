@@ -20,7 +20,7 @@ greenlet>=3.3.0
 
 # Orange3 Data Mining
 orange3==3.40.0
-orange3-text>=1.17.0
+orange3-text>=1.16.3
 
 # PyQt6 (for Orange3)
 pyqt6>=6.10.0,<7.0
