@@ -1,8 +1,7 @@
 # Orange3-Web Backend Requirements
-# Python 3.12 + Conda 호환 (2024-12-31)
+# Python 3.12 호환 (2024-12-31)
 #
-# NOTE: Orange3, orange3-text, PyQt는 Conda로 설치됨
-# 이 파일은 pip으로 설치할 추가 패키지만 포함
+# uv/pip으로 설치할 패키지
 
 # FastAPI Backend
 fastapi>=0.128.0,<1.0
@@ -19,11 +18,15 @@ sqlalchemy>=2.0.45
 aiosqlite>=0.22.0
 greenlet>=3.3.0
 
-pyqt6>=6.10.0,<7.0
-pyqt6-webengine>=6.10.0,<7.0
+# Orange3 Data Mining
+orange3==3.40.0
+orange3-text>=1.17.0
 
-orange3>=3.40.0,<4.0
-orange3-text>=1.16.3,<2.0
+# PyQt6 (for Orange3)
+pyqt6>=6.10.0,<7.0
+pyqt6-sip>=13.10.0
+
+# Data Science
 numpy>=2.0.0,<3.0
 scipy>=1.14.0,<2.0
 scikit-learn>=1.5.0,<2.0
