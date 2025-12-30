@@ -147,6 +147,8 @@ class WidgetDiscovery:
                 if widget_info and widget_info.get('name'):
                     # Add special inputs for Evaluate widgets (Learner, Model)
                     self._add_evaluate_widget_inputs(widget_info)
+                    # Add inputs/outputs for Text Mining widgets
+                    self._add_text_mining_widget_io(widget_info)
                     # Determine category (widget may override)
                     widget_category = widget_info.get('category') or cat_info['name']
                     
@@ -355,6 +357,72 @@ class WidgetDiscovery:
                     if inp.get('type') == 'Data':
                         insert_pos = i + 1
                 inputs.insert(insert_pos, predictors_input)
+    
+    def _add_text_mining_widget_io(self, widget_info: Dict) -> None:
+        """Add inputs/outputs for Text Mining widgets that need manual configuration."""
+        widget_name = widget_info.get('name', '').lower()
+        inputs = widget_info.get('inputs', [])
+        outputs = widget_info.get('outputs', [])
+        input_ids = {inp.get('id') for inp in inputs}
+        output_ids = {outp.get('id') for outp in outputs}
+        
+        # Corpus widget
+        if widget_name == 'corpus':
+            if 'data' not in input_ids:
+                inputs.insert(0, {'id': 'data', 'name': 'Data', 'type': 'Data'})
+            if 'corpus' not in output_ids:
+                outputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+        
+        # Preprocess Text widget
+        elif 'preprocess' in widget_name and 'text' in widget_name:
+            if 'corpus' not in input_ids:
+                inputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'corpus' not in output_ids:
+                outputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+        
+        # Bag of Words widget
+        elif 'bag' in widget_name and 'words' in widget_name:
+            if 'corpus' not in input_ids:
+                inputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'corpus' not in output_ids:
+                outputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'bow' not in output_ids and 'data' not in output_ids:
+                outputs.append({'id': 'bow', 'name': 'Bag of Words', 'type': 'Data'})
+        
+        # Word Cloud widget
+        elif 'word' in widget_name and 'cloud' in widget_name:
+            if 'corpus' not in input_ids:
+                inputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'topic' not in input_ids:
+                inputs.append({'id': 'topic', 'name': 'Topic', 'type': 'Topic'})
+            if 'word_counts' not in output_ids:
+                outputs.insert(0, {'id': 'word_counts', 'name': 'Word Counts', 'type': 'Data'})
+            if 'corpus' not in output_ids:
+                outputs.append({'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+        
+        # Corpus Viewer widget
+        elif 'corpus' in widget_name and 'viewer' in widget_name:
+            if 'corpus' not in input_ids:
+                inputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'selected_documents' not in output_ids:
+                outputs.insert(0, {'id': 'selected_documents', 'name': 'Selected Documents', 'type': 'Corpus'})
+        
+        # Word List widget
+        elif 'word' in widget_name and 'list' in widget_name:
+            if 'words' not in output_ids:
+                outputs.insert(0, {'id': 'words', 'name': 'Words', 'type': 'Word List'})
+        
+        # Word Enrichment widget
+        elif 'word' in widget_name and 'enrichment' in widget_name:
+            if 'data' not in input_ids:
+                inputs.insert(0, {'id': 'data', 'name': 'Data', 'type': 'Data'})
+            if 'words' not in input_ids:
+                inputs.append({'id': 'words', 'name': 'Words', 'type': 'Word List'})
+            if 'selected_words' not in output_ids:
+                outputs.insert(0, {'id': 'selected_words', 'name': 'Selected Words', 'type': 'Data'})
+        
+        widget_info['inputs'] = inputs
+        widget_info['outputs'] = outputs
     
     def _extract_assign(self, item: ast.Assign, info: Dict):
         """Extract info from simple assignment."""

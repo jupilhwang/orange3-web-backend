@@ -19,7 +19,11 @@ from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
 import json
 import uuid
+import time
 from pydantic import BaseModel
+
+# Server startup timestamp - used to detect server restarts
+SERVER_START_TIME = int(time.time())
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -77,7 +81,10 @@ from .widgets import (
     test_and_score_router,
     confusion_matrix_router,
     kmeans_router,
-    text_mining_router,
+    corpus_router,
+    preprocess_text_router,
+    bag_of_words_router,
+    word_cloud_router,
     data_info_router,
 )
 from .widgets.file_upload import UPLOAD_DIR
@@ -273,7 +280,8 @@ async def health_check():
         "service": "orange3-web",
         "orange3": availability.get("orange3", False),
         "database": "sqlite",
-        "locks": "asyncio"
+        "locks": "asyncio",
+        "server_start_time": SERVER_START_TIME
     }
 
 
@@ -603,7 +611,10 @@ api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
 api_v1.include_router(confusion_matrix_router)
 api_v1.include_router(kmeans_router)
-api_v1.include_router(text_mining_router)
+api_v1.include_router(corpus_router)
+api_v1.include_router(preprocess_text_router)
+api_v1.include_router(bag_of_words_router)
+api_v1.include_router(word_cloud_router)
 api_v1.include_router(data_info_router)
 
 # Include Workflow Router

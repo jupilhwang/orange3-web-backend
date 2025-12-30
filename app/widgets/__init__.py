@@ -33,7 +33,10 @@ from .confusion_matrix import router as confusion_matrix_router
 from .kmeans import router as kmeans_router
 
 # Import widget routers - Text Mining
-from .text_mining import router as text_mining_router
+from .corpus import router as corpus_router
+from .preprocess_text import router as preprocess_text_router
+from .bag_of_words import router as bag_of_words_router
+from .word_cloud import router as word_cloud_router
 
 # Import utility routers
 from .data_info import router as data_info_router
@@ -63,7 +66,10 @@ __all__ = [
     # Unsupervised widgets
     "kmeans_router",
     # Text Mining widgets
-    "text_mining_router",
+    "corpus_router",
+    "preprocess_text_router",
+    "bag_of_words_router",
+    "word_cloud_router",
     # Utility routers
     "data_info_router",
 ]
