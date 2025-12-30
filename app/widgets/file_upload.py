@@ -1,13 +1,19 @@
 """
 File Upload Widget API endpoints.
+Multi-tenant support: files are stored in tenant-specific directories.
 """
 
 import logging
 import shutil
 import uuid
 from pathlib import Path
+from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Header, Depends
+
+from ..core.tenant import get_current_tenant
+from ..models import Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +26,29 @@ try:
 except ImportError:
     ORANGE_AVAILABLE = False
 
-# Upload directory configuration
-UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Base upload directory configuration
+BASE_UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
+BASE_UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+def get_tenant_upload_dir(tenant_id: str) -> Path:
+    """Get the upload directory for a specific tenant."""
+    tenant_dir = BASE_UPLOAD_DIR / tenant_id
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    return tenant_dir
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
     """
     Upload a data file from local PC.
     Supports: CSV, TSV, TAB, XLSX, PKL files
+    
+    Files are stored in tenant-specific directories:
+    uploads/{tenant_id}/{uuid}_{filename}
     """
     # Validate file extension
     allowed_extensions = {'.csv', '.tsv', '.tab', '.xlsx', '.xls', '.pkl', '.pickle', '.txt'}
@@ -41,14 +60,22 @@ async def upload_file(file: UploadFile = File(...)):
             detail=f"File type not supported. Allowed types: {', '.join(sorted(allowed_extensions))}"
         )
     
+    # Get tenant-specific upload directory
+    tenant_dir = get_tenant_upload_dir(x_tenant_id)
+    
     # Generate unique filename to avoid conflicts
-    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
-    file_path = UPLOAD_DIR / unique_filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    unique_filename = f"{timestamp}_{unique_id}_{file.filename}"
+    file_path = tenant_dir / unique_filename
     
     try:
         # Save the uploaded file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+        
+        # Relative path for client reference
+        relative_path = f"uploads/{x_tenant_id}/{unique_filename}"
         
         # Try to load and parse the data with Orange3
         if ORANGE_AVAILABLE:
@@ -91,7 +118,8 @@ async def upload_file(file: UploadFile = File(...)):
                     "success": True,
                     "filename": file.filename,
                     "savedPath": str(file_path),
-                    "relativePath": f"uploads/{unique_filename}",
+                    "relativePath": relative_path,
+                    "tenantId": x_tenant_id,
                     "name": data.name or file.filename,
                     "description": f"Uploaded file: {file.filename}",
                     "instances": len(data),
@@ -100,17 +128,19 @@ async def upload_file(file: UploadFile = File(...)):
                     "classType": "Classification" if data.domain.class_var and not data.domain.class_var.is_continuous else "Regression" if data.domain.class_var else "None",
                     "classValues": len(data.domain.class_var.values) if data.domain.class_var and hasattr(data.domain.class_var, 'values') else None,
                     "metaAttributes": len(data.domain.metas),
-                    "columns": columns
+                    "columns": columns,
+                    "uploadedAt": datetime.now().isoformat()
                 }
             except Exception as e:
-                print(f"Orange3 parsing failed: {e}")
+                logger.warning(f"Orange3 parsing failed: {e}")
         
         # Fallback: Return basic file info without parsing
         return {
             "success": True,
             "filename": file.filename,
             "savedPath": str(file_path),
-            "relativePath": f"uploads/{unique_filename}",
+            "relativePath": relative_path,
+            "tenantId": x_tenant_id,
             "name": file.filename,
             "description": f"Uploaded file: {file.filename}",
             "instances": 0,
@@ -120,7 +150,8 @@ async def upload_file(file: UploadFile = File(...)):
             "classValues": None,
             "metaAttributes": 0,
             "columns": [],
-            "parseError": "Orange3 not available or parsing failed"
+            "parseError": "Orange3 not available or parsing failed",
+            "uploadedAt": datetime.now().isoformat()
         }
         
     except Exception as e:
@@ -131,31 +162,90 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @router.get("/uploaded")
-async def list_uploaded_files():
-    """List all uploaded files."""
+async def list_uploaded_files(
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """List all uploaded files for the current tenant."""
+    tenant_dir = get_tenant_upload_dir(x_tenant_id)
+    
     files = []
-    if UPLOAD_DIR.exists():
-        for f in UPLOAD_DIR.iterdir():
+    if tenant_dir.exists():
+        for f in sorted(tenant_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
             if f.is_file():
+                stat = f.stat()
                 files.append({
                     "filename": f.name,
-                    "path": f"uploads/{f.name}",
-                    "size": f.stat().st_size
+                    "originalName": "_".join(f.name.split("_")[2:]) if len(f.name.split("_")) > 2 else f.name,
+                    "path": f"uploads/{x_tenant_id}/{f.name}",
+                    "size": stat.st_size,
+                    "uploadedAt": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "tenantId": x_tenant_id
                 })
-    return {"files": files}
+    
+    return {
+        "files": files,
+        "tenantId": x_tenant_id,
+        "totalCount": len(files)
+    }
 
 
 @router.delete("/uploaded/{filename}")
-async def delete_uploaded_file(filename: str):
-    """Delete an uploaded file."""
-    file_path = UPLOAD_DIR / filename
+async def delete_uploaded_file(
+    filename: str,
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """Delete an uploaded file for the current tenant."""
+    tenant_dir = get_tenant_upload_dir(x_tenant_id)
+    file_path = tenant_dir / filename
+    
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
+    # Security check: ensure file is within tenant directory
+    try:
+        file_path.resolve().relative_to(tenant_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
     try:
         file_path.unlink()
-        return {"message": f"File {filename} deleted"}
+        return {
+            "success": True,
+            "message": f"File {filename} deleted",
+            "tenantId": x_tenant_id
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
 
+@router.get("/uploaded/stats")
+async def get_upload_stats(
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """Get upload statistics for the current tenant."""
+    tenant_dir = get_tenant_upload_dir(x_tenant_id)
+    
+    total_files = 0
+    total_size = 0
+    
+    if tenant_dir.exists():
+        for f in tenant_dir.iterdir():
+            if f.is_file():
+                total_files += 1
+                total_size += f.stat().st_size
+    
+    return {
+        "tenantId": x_tenant_id,
+        "totalFiles": total_files,
+        "totalSize": total_size,
+        "totalSizeHuman": _format_size(total_size)
+    }
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format file size in human readable format."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"

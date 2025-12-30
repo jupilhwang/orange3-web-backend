@@ -1,14 +1,18 @@
 """
 Corpus Widget API endpoints.
 Load and manage text corpus data.
+Multi-tenant support for corpus files.
 """
 
 import logging
 import uuid
 import os
+import shutil
+from pathlib import Path
+from datetime import datetime
 from typing import List, Optional, Dict
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, UploadFile, File
 from pydantic import BaseModel
 
 from .text_mining_utils import (
@@ -18,6 +22,17 @@ from .text_mining_utils import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/text", tags=["Text Mining - Corpus"])
+
+# Base upload directory for corpus files
+BASE_CORPUS_DIR = Path(__file__).parent.parent.parent / "uploads" / "corpus"
+BASE_CORPUS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_tenant_corpus_dir(tenant_id: str) -> Path:
+    """Get the corpus directory for a specific tenant."""
+    tenant_dir = BASE_CORPUS_DIR / tenant_id
+    tenant_dir.mkdir(parents=True, exist_ok=True)
+    return tenant_dir
 
 
 # ============================================================================
@@ -226,4 +241,133 @@ async def get_corpus_info(corpus_id: str) -> CorpusResponse:
         title_variable=cached.get('title_variable'),
         language=cached.get('language', 'English')
     )
+
+
+# ============================================================================
+# Corpus File Upload (Multi-tenant)
+# ============================================================================
+
+@router.post("/corpus/upload")
+async def upload_corpus_file(
+    file: UploadFile = File(...),
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """
+    Upload a corpus file (tab, csv, txt).
+    Files are stored in tenant-specific directories.
+    """
+    allowed_extensions = {'.tab', '.csv', '.tsv', '.txt', '.xlsx'}
+    file_ext = Path(file.filename).suffix.lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not supported. Allowed: {', '.join(sorted(allowed_extensions))}"
+        )
+    
+    # Get tenant-specific directory
+    tenant_dir = get_tenant_corpus_dir(x_tenant_id)
+    
+    # Generate unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    unique_filename = f"{timestamp}_{unique_id}_{file.filename}"
+    file_path = tenant_dir / unique_filename
+    
+    try:
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        result = {
+            "success": True,
+            "filename": file.filename,
+            "savedPath": str(file_path),
+            "relativePath": f"uploads/corpus/{x_tenant_id}/{unique_filename}",
+            "tenantId": x_tenant_id,
+            "uploadedAt": datetime.now().isoformat()
+        }
+        
+        # Try to load as corpus and get info
+        if ORANGE_TEXT_AVAILABLE:
+            try:
+                from orangecontrib.text import Corpus
+                corpus = Corpus.from_file(str(file_path))
+                
+                result.update({
+                    "documents": len(corpus),
+                    "textFeatures": [v.name for v in corpus.text_features] if hasattr(corpus, 'text_features') else [],
+                    "metaFeatures": [v.name for v in corpus.domain.metas] if corpus.domain.metas else []
+                })
+            except Exception as e:
+                logger.warning(f"Could not parse corpus: {e}")
+                result["parseWarning"] = str(e)
+        
+        return result
+        
+    except Exception as e:
+        if file_path.exists():
+            file_path.unlink()
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@router.get("/corpus/files")
+async def list_corpus_files(
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """List all corpus files for the current tenant."""
+    tenant_dir = get_tenant_corpus_dir(x_tenant_id)
+    
+    files = []
+    if tenant_dir.exists():
+        for f in sorted(tenant_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if f.is_file():
+                stat = f.stat()
+                # Extract original name from unique filename
+                parts = f.name.split("_", 2)
+                original_name = parts[2] if len(parts) > 2 else f.name
+                
+                files.append({
+                    "filename": f.name,
+                    "originalName": original_name,
+                    "path": str(f),
+                    "relativePath": f"uploads/corpus/{x_tenant_id}/{f.name}",
+                    "size": stat.st_size,
+                    "uploadedAt": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+    
+    return {
+        "files": files,
+        "tenantId": x_tenant_id,
+        "totalCount": len(files)
+    }
+
+
+@router.delete("/corpus/files/{filename}")
+async def delete_corpus_file(
+    filename: str,
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """Delete a corpus file."""
+    tenant_dir = get_tenant_corpus_dir(x_tenant_id)
+    file_path = tenant_dir / filename
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Security: ensure file is in tenant directory
+    try:
+        file_path.resolve().relative_to(tenant_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    try:
+        file_path.unlink()
+        return {
+            "success": True,
+            "message": f"File {filename} deleted",
+            "tenantId": x_tenant_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
