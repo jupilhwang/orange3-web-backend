@@ -113,9 +113,42 @@ _discovered_widgets = None
 
 
 def get_discovered_widgets():
-    """Get or discover widgets from Orange3 installation."""
+    """Get or discover widgets from Orange3 installation.
+    
+    Priority:
+    1. Use OrangeRegistryAdapter if available (most complete - 105+ widgets)
+    2. Fall back to discover_widgets() if registry not available
+    """
     global _discovered_widgets
     if _discovered_widgets is None:
+        # Try to use the registry from main.py first (has all 105 widgets)
+        if _registry_getter and ORANGE_AVAILABLE:
+            registry = _registry_getter()
+            if registry:
+                try:
+                    categories = registry.list_categories()
+                    widgets = registry.list_widgets()
+                    
+                    # Convert to discovery format
+                    _discovered_widgets = {
+                        "categories": [
+                            {
+                                "name": cat["name"],
+                                "color": cat.get("background", "#808080"),
+                                "priority": cat.get("priority", 10),
+                                "widgets": [w for w in widgets if w.get("category") == cat["name"]]
+                            }
+                            for cat in categories
+                        ],
+                        "widgets": widgets,
+                        "total": len(widgets)
+                    }
+                    logger.info(f"Using OrangeRegistryAdapter: {len(widgets)} widgets in {len(categories)} categories")
+                    return _discovered_widgets
+                except Exception as e:
+                    logger.warning(f"Failed to use registry: {e}")
+        
+        # Fallback to discover_widgets()
         orange3_path = None
         
         # 1. Environment variable (highest priority)
