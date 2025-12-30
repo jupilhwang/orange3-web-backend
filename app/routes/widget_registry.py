@@ -5,9 +5,44 @@ Handles widget discovery, listing, and compatibility checking.
 
 import logging
 import os
+import sys
+import site
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
+
+
+def _get_site_packages_paths() -> List[str]:
+    """Get all possible site-packages paths dynamically."""
+    paths = []
+    
+    # site-packages from site module
+    try:
+        paths.extend(site.getsitepackages())
+    except Exception:
+        pass
+    
+    # User site-packages
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            paths.append(user_site)
+    except Exception:
+        pass
+    
+    # Virtual environment site-packages
+    venv_path = os.environ.get('VIRTUAL_ENV')
+    if venv_path:
+        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        paths.append(os.path.join(venv_path, 'lib', py_version, 'site-packages'))
+    
+    # Conda environment
+    conda_prefix = os.environ.get('CONDA_PREFIX')
+    if conda_prefix:
+        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        paths.append(os.path.join(conda_prefix, 'lib', py_version, 'site-packages'))
+    
+    return [p for p in paths if p and os.path.exists(p)]
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +84,11 @@ def get_discovered_widgets():
         # Try to find Orange3 widgets path
         possible_paths = [
             os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"),
-            os.path.join(os.path.dirname(__file__), "..", "..", ".venv", "lib", "python3.11", "site-packages", "Orange", "widgets"),
         ]
+        
+        # Add dynamic site-packages paths
+        for sp in _get_site_packages_paths():
+            possible_paths.append(os.path.join(sp, "Orange", "widgets"))
         
         orange3_path = None
         for path in possible_paths:

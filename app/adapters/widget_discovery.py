@@ -8,8 +8,37 @@ import os
 import ast
 import json
 import re
+import sys
+import site
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+
+
+def _get_site_packages_paths() -> List[str]:
+    """Get all possible site-packages paths dynamically."""
+    paths = []
+    
+    # site-packages from site module
+    paths.extend(site.getsitepackages())
+    
+    # User site-packages
+    user_site = site.getusersitepackages()
+    if user_site:
+        paths.append(user_site)
+    
+    # Virtual environment site-packages
+    venv_path = os.environ.get('VIRTUAL_ENV')
+    if venv_path:
+        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        paths.append(os.path.join(venv_path, 'lib', py_version, 'site-packages'))
+    
+    # Conda environment
+    conda_prefix = os.environ.get('CONDA_PREFIX')
+    if conda_prefix:
+        py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+        paths.append(os.path.join(conda_prefix, 'lib', py_version, 'site-packages'))
+    
+    return [p for p in paths if p and os.path.exists(p)]
 
 
 # Category color definitions from Orange3
@@ -57,9 +86,11 @@ class WidgetDiscovery:
         possible_paths = [
             # Local development
             os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"),
-            # pip installed
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", ".venv", "lib", "python3.11", "site-packages", "Orange", "widgets"),
         ]
+        
+        # Add dynamic site-packages paths
+        for sp in _get_site_packages_paths():
+            possible_paths.append(os.path.join(sp, "Orange", "widgets"))
         
         for path in possible_paths:
             if os.path.exists(path):
@@ -73,9 +104,11 @@ class WidgetDiscovery:
         possible_paths = [
             # Local development
             os.path.expanduser("~/works/test/orange3/orange3-text/orangecontrib/text/widgets"),
-            # pip installed
-            os.path.join(os.path.dirname(__file__), "..", "..", "..", ".venv", "lib", "python3.11", "site-packages", "orangecontrib", "text", "widgets"),
         ]
+        
+        # Add dynamic site-packages paths
+        for sp in _get_site_packages_paths():
+            possible_paths.append(os.path.join(sp, "orangecontrib", "text", "widgets"))
         
         for path in possible_paths:
             if os.path.exists(path):
