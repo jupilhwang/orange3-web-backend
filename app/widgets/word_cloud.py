@@ -40,6 +40,7 @@ class WordCloudResponse(BaseModel):
     total_words: int = 0
     word_counts_id: Optional[str] = None
     selected_words: List[str] = []
+    is_bow_weights: bool = False  # True when showing BOW weights
     error: Optional[str] = None
 
 
@@ -94,6 +95,7 @@ async def get_word_cloud_data(
     try:
         word_freq: Dict[str, int] = {}
         doc_freq: Dict[str, int] = {}  # Document frequency for Word Counts output
+        is_bow_weights = False  # Track if using BOW weights
         
         # Use topic words if available
         if topic_words:
@@ -102,35 +104,56 @@ async def get_word_cloud_data(
         
         # Use corpus otherwise
         elif corpus is not None:
-            if hasattr(corpus, 'tokens'):
-                # Preprocessed corpus with tokens
-                for doc_tokens in corpus.tokens:
-                    doc_words = set()
-                    for token in doc_tokens:
-                        word_freq[token] = word_freq.get(token, 0) + 1
-                        doc_words.add(token)
-                    for word in doc_words:
-                        doc_freq[word] = doc_freq.get(word, 0) + 1
-            elif hasattr(corpus, 'documents'):
-                # Raw corpus
-                for doc in corpus.documents:
-                    doc_words = set()
-                    for word in doc.lower().split():
-                        word_freq[word] = word_freq.get(word, 0) + 1
-                        doc_words.add(word)
-                    for word in doc_words:
-                        doc_freq[word] = doc_freq.get(word, 0) + 1
-            elif hasattr(corpus, 'domain') and corpus.domain.attributes:
-                # BOW corpus - use attribute names as words
-                for attr in corpus.domain.attributes:
-                    if hasattr(attr, 'name'):
-                        # Sum column values as frequency
-                        col_values = corpus.get_column(attr.name)
-                        col_sum = sum(col_values)
-                        doc_count = sum(1 for v in col_values if v > 0)
-                        if col_sum > 0:
-                            word_freq[attr.name] = int(col_sum)
-                            doc_freq[attr.name] = doc_count
+            # First check for BOW features (like Orange3's _bow_words)
+            if hasattr(corpus, 'domain') and corpus.domain.attributes:
+                bow_words = {}
+                for i, attr in enumerate(corpus.domain.attributes):
+                    if hasattr(attr, 'attributes') and attr.attributes.get('bow-feature', False):
+                        # This is a BOW feature
+                        col_values = corpus.X[:, i]
+                        avg_bow = col_values.mean()
+                        if avg_bow > 0:
+                            bow_words[attr.name] = avg_bow
+                
+                if bow_words:
+                    # Use BOW weights
+                    word_freq = {k: v for k, v in bow_words.items()}
+                    is_bow_weights = True
+                    # Calculate document frequency
+                    for i, attr in enumerate(corpus.domain.attributes):
+                        if attr.name in word_freq:
+                            col_values = corpus.X[:, i]
+                            doc_freq[attr.name] = sum(1 for v in col_values if v > 0)
+            
+            # If no BOW, try tokens or documents
+            if not word_freq:
+                if hasattr(corpus, 'tokens'):
+                    # Preprocessed corpus with tokens
+                    for doc_tokens in corpus.tokens:
+                        doc_words = set()
+                        for token in doc_tokens:
+                            word_freq[token] = word_freq.get(token, 0) + 1
+                            doc_words.add(token)
+                        for word in doc_words:
+                            doc_freq[word] = doc_freq.get(word, 0) + 1
+                elif hasattr(corpus, 'ngrams'):
+                    # Use ngrams if available (Orange3 Corpus)
+                    for doc in corpus.ngrams:
+                        doc_words = set()
+                        for word in doc:
+                            word_freq[word] = word_freq.get(word, 0) + 1
+                            doc_words.add(word)
+                        for word in doc_words:
+                            doc_freq[word] = doc_freq.get(word, 0) + 1
+                elif hasattr(corpus, 'documents'):
+                    # Raw corpus
+                    for doc in corpus.documents:
+                        doc_words = set()
+                        for word in doc.lower().split():
+                            word_freq[word] = word_freq.get(word, 0) + 1
+                            doc_words.add(word)
+                        for word in doc_words:
+                            doc_freq[word] = doc_freq.get(word, 0) + 1
         
         # Sort by frequency and take top N
         sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
@@ -172,7 +195,8 @@ async def get_word_cloud_data(
             words=words,
             total_words=len(word_freq),
             word_counts_id=word_counts_id,
-            selected_words=list(selected_set) if selected_set else []
+            selected_words=list(selected_set) if selected_set else [],
+            is_bow_weights=is_bow_weights
         )
         
     except Exception as e:
@@ -207,14 +231,19 @@ async def get_word_counts(word_counts_id: str) -> WordCountsResponse:
     )
 
 
+class WordSelectRequest(BaseModel):
+    """Request for selecting words in word cloud."""
+    corpus_id: str
+    selected_words: List[str]
+
+
 @router.post("/wordcloud/select")
 async def select_words(
-    corpus_id: str,
-    selected_words: List[str],
+    request: WordSelectRequest,
     x_session_id: Optional[str] = Header(None)
 ):
     """Filter corpus by selected words."""
-    cached = get_cache_item(corpus_id)
+    cached = get_cache_item(request.corpus_id)
     if not cached:
         raise HTTPException(status_code=404, detail="Corpus not found")
     
@@ -222,7 +251,7 @@ async def select_words(
         corpus = cached.get('corpus') or cached.get('data')
         
         # Filter documents containing selected words
-        selected_set = set(w.lower() for w in selected_words)
+        selected_set = set(w.lower() for w in request.selected_words)
         selected_indices = []
         
         if hasattr(corpus, 'tokens'):
@@ -240,22 +269,22 @@ async def select_words(
             new_corpus_id = f"corpus_{uuid.uuid4().hex[:8]}"
             set_cache_item(new_corpus_id, {
                 'corpus': filtered_corpus,
-                'source_id': corpus_id,
-                'selected_words': selected_words
+                'source_id': request.corpus_id,
+                'selected_words': request.selected_words
             })
             
             return {
                 'success': True,
                 'corpus_id': new_corpus_id,
                 'documents': len(filtered_corpus),
-                'selected_words': selected_words
+                'selected_words': request.selected_words
             }
         else:
             return {
                 'success': True,
                 'corpus_id': None,
                 'documents': 0,
-                'selected_words': selected_words
+                'selected_words': request.selected_words
             }
             
     except Exception as e:

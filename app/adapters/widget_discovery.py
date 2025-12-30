@@ -391,14 +391,18 @@ class WidgetDiscovery:
         
         # Word Cloud widget
         elif 'word' in widget_name and 'cloud' in widget_name:
+            # Inputs: Corpus (default), Topic (optional)
             if 'corpus' not in input_ids:
                 inputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
             if 'topic' not in input_ids:
                 inputs.append({'id': 'topic', 'name': 'Topic', 'type': 'Topic'})
-            if 'word_counts' not in output_ids:
-                outputs.insert(0, {'id': 'word_counts', 'name': 'Word Counts', 'type': 'Data'})
+            # Outputs: Corpus (default), Selected Words, Word Counts
             if 'corpus' not in output_ids:
-                outputs.append({'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+                outputs.insert(0, {'id': 'corpus', 'name': 'Corpus', 'type': 'Corpus'})
+            if 'selected_words' not in output_ids:
+                outputs.append({'id': 'selected_words', 'name': 'Selected Words', 'type': 'Data'})
+            if 'word_counts' not in output_ids:
+                outputs.append({'id': 'word_counts', 'name': 'Word Counts', 'type': 'Data'})
         
         # Corpus Viewer widget
         elif 'corpus' in widget_name and 'viewer' in widget_name:
