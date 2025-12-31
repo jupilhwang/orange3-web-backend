@@ -18,21 +18,14 @@ from pydantic import BaseModel
 from .text_mining_utils import (
     ORANGE_TEXT_AVAILABLE, get_text_cache, set_cache_item, get_cache_item
 )
+from ..core.paths import get_corpus_dir, get_tenant_corpus_dir
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/text", tags=["Text Mining - Corpus"])
 
-# Base upload directory for corpus files
-BASE_CORPUS_DIR = Path(__file__).parent.parent.parent / "uploads" / "corpus"
-BASE_CORPUS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def get_tenant_corpus_dir(tenant_id: str) -> Path:
-    """Get the corpus directory for a specific tenant."""
-    tenant_dir = BASE_CORPUS_DIR / tenant_id
-    tenant_dir.mkdir(parents=True, exist_ok=True)
-    return tenant_dir
+# Base upload directory for corpus files (from centralized config)
+BASE_CORPUS_DIR = get_corpus_dir()
 
 
 # ============================================================================

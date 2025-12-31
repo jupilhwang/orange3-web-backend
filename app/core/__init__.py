@@ -4,6 +4,7 @@ Core infrastructure modules for Orange3 Web Backend.
 - db_models: SQLAlchemy ORM models
 - locks: Async lock utilities
 - tenant: Multi-tenant management
+- paths: Centralized path configuration with environment variable support
 """
 
 from .database import (
@@ -35,6 +36,13 @@ from .tenant import (
     TenantManager,
     get_current_tenant,
 )
+from .paths import (
+    get_upload_dir,
+    get_corpus_dir,
+    get_datasets_cache_dir,
+    get_tenant_upload_dir,
+    get_tenant_corpus_dir,
+)
 
 __all__ = [
     # database
@@ -62,5 +70,11 @@ __all__ = [
     # tenant
     "TenantManager",
     "get_current_tenant",
+    # paths
+    "get_upload_dir",
+    "get_corpus_dir",
+    "get_datasets_cache_dir",
+    "get_tenant_upload_dir",
+    "get_tenant_corpus_dir",
 ]
 

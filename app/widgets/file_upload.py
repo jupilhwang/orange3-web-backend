@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Header, Depends
 
 from ..core.tenant import get_current_tenant
+from ..core.paths import get_upload_dir, get_tenant_upload_dir
 from ..models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -26,16 +27,8 @@ try:
 except ImportError:
     ORANGE_AVAILABLE = False
 
-# Base upload directory configuration
-BASE_UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
-BASE_UPLOAD_DIR.mkdir(exist_ok=True)
-
-
-def get_tenant_upload_dir(tenant_id: str) -> Path:
-    """Get the upload directory for a specific tenant."""
-    tenant_dir = BASE_UPLOAD_DIR / tenant_id
-    tenant_dir.mkdir(parents=True, exist_ok=True)
-    return tenant_dir
+# Base upload directory (from centralized config)
+BASE_UPLOAD_DIR = get_upload_dir()
 
 
 @router.post("/upload")

@@ -10,14 +10,15 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+from ..core.paths import get_datasets_cache_dir
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/datasets", tags=["Datasets"])
 
 # Datasets server URL (Orange3's official dataset repository)
 DATASETS_INDEX_URL = "https://datasets.biolab.si/"
-DATASETS_CACHE_DIR = Path(__file__).parent.parent.parent / "datasets_cache"
-DATASETS_CACHE_DIR.mkdir(exist_ok=True)
+DATASETS_CACHE_DIR = get_datasets_cache_dir()
 
 # In-memory cache for datasets list
 _datasets_cache = None
