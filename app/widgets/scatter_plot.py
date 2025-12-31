@@ -219,6 +219,19 @@ async def get_scatter_plot_data(
                     point["class"] = cls_name
                     point["color"] = class_colors.get(cls_name, colors[0])
             
+            # Add range data (all numeric variable values for error bars)
+            range_data = {}
+            for attr in data.domain.attributes:
+                if attr.is_continuous:
+                    try:
+                        col_idx = data.domain.index(attr)
+                        val = data.X[i, col_idx]
+                        if not np.isnan(val):
+                            range_data[attr.name] = float(val)
+                    except:
+                        pass
+            point["rangeData"] = range_data
+            
             points.append(point)
         
         # Calculate ranges
@@ -305,6 +318,139 @@ async def select_scatter_plot_data(
         }
         
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ProjectionRequest(BaseModel):
+    """Request model for finding informative projections."""
+    path: str
+    color_attr: Optional[str] = None
+
+
+@router.post("/scatter-plot/projections")
+async def find_informative_projections(
+    request: ProjectionRequest,
+    x_session_id: Optional[str] = Header(None)
+):
+    """Find informative projections for scatter plot (Score Plot)."""
+    if not ORANGE_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Orange3 not available")
+    
+    try:
+        from .data_utils import load_data
+        import numpy as np
+        
+        logger.info(f"Finding informative projections for: {request.path}")
+        data = load_data(request.path, session_id=x_session_id)
+        if data is None:
+            raise HTTPException(status_code=400, detail=f"Failed to load data: {request.path}")
+        
+        # Get numeric attributes only
+        numeric_attrs = [attr for attr in data.domain.attributes 
+                        if attr.is_continuous]
+        
+        if len(numeric_attrs) < 2:
+            return {"projections": [], "message": "Need at least 2 numeric variables"}
+        
+        # Get class variable if exists for scoring
+        class_var = data.domain.class_var if data.domain.class_var else None
+        
+        # Calculate projection scores using variance-based scoring
+        # Higher score = better separation of classes (if class exists) or higher variance spread
+        projections = []
+        
+        for i, attr1 in enumerate(numeric_attrs):
+            for attr2 in numeric_attrs[i+1:]:
+                try:
+                    # Get data for these two attributes
+                    col1_idx = data.domain.index(attr1)
+                    col2_idx = data.domain.index(attr2)
+                    
+                    x_data = data.X[:, col1_idx]
+                    y_data = data.X[:, col2_idx]
+                    
+                    # Remove NaN values
+                    valid_mask = ~(np.isnan(x_data) | np.isnan(y_data))
+                    x_valid = x_data[valid_mask]
+                    y_valid = y_data[valid_mask]
+                    
+                    if len(x_valid) < 2:
+                        continue
+                    
+                    # Calculate score based on data spread and correlation
+                    x_std = np.std(x_valid) if np.std(x_valid) > 0 else 1e-10
+                    y_std = np.std(y_valid) if np.std(y_valid) > 0 else 1e-10
+                    
+                    # Correlation (lower is better for projections - we want independent axes)
+                    if len(x_valid) > 1:
+                        correlation = abs(np.corrcoef(x_valid, y_valid)[0, 1])
+                        if np.isnan(correlation):
+                            correlation = 0
+                    else:
+                        correlation = 0
+                    
+                    # Score: higher variance spread + lower correlation = better
+                    variance_score = (x_std * y_std) ** 0.5
+                    independence_score = 1 - correlation
+                    
+                    # If we have class variable, add class separation score
+                    class_score = 0
+                    if class_var and class_var.is_discrete:
+                        try:
+                            classes = data.Y[valid_mask]
+                            unique_classes = np.unique(classes[~np.isnan(classes)])
+                            if len(unique_classes) > 1:
+                                # Calculate between-class variance
+                                class_means_x = []
+                                class_means_y = []
+                                for c in unique_classes:
+                                    mask = classes == c
+                                    if np.sum(mask) > 0:
+                                        class_means_x.append(np.mean(x_valid[mask]))
+                                        class_means_y.append(np.mean(y_valid[mask]))
+                                
+                                if len(class_means_x) > 1:
+                                    class_score = np.std(class_means_x) + np.std(class_means_y)
+                        except:
+                            pass
+                    
+                    # Combined score (normalized)
+                    score = variance_score * independence_score * (1 + class_score)
+                    
+                    projections.append({
+                        "attr1": attr1.name,
+                        "attr2": attr2.name,
+                        "score": float(score),
+                        "correlation": float(correlation),
+                        "variance": float(variance_score)
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Error calculating projection score for {attr1.name}/{attr2.name}: {e}")
+                    continue
+        
+        # Sort by score descending
+        projections.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Normalize scores to 0-1 range
+        if projections:
+            max_score = projections[0]["score"] if projections[0]["score"] > 0 else 1
+            for p in projections:
+                p["score"] = p["score"] / max_score
+        
+        # Add rank
+        for idx, p in enumerate(projections):
+            p["rank"] = idx + 1
+        
+        # Return top 20 projections
+        return {
+            "projections": projections[:20],
+            "total": len(projections)
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 

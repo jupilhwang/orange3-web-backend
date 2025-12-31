@@ -81,7 +81,7 @@ database.echo=false
 # - filesystem: 파일시스템에 저장 (단일 서버용, 기본값)
 # - database: 데이터베이스에 BLOB으로 저장 (멀티 서버용)
 # 환경변수: STORAGE_TYPE
-storage.type=filesystem
+storage.type=database
 
 # 데이터베이스 저장 시 최대 파일 크기 (바이트)
 # 환경변수: MAX_DB_FILE_SIZE

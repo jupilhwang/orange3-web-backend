@@ -243,7 +243,7 @@ async def load_corpus(
         )
 
 
-@router.get("/corpus/{corpus_id}")
+@router.get("/corpus/info/{corpus_id}")
 async def get_corpus_info(corpus_id: str) -> CorpusResponse:
     """Get information about a corpus."""
     cached = get_cache_item(corpus_id)
@@ -367,7 +367,7 @@ async def upload_corpus_file(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-@router.get("/corpus/files")
+@router.get("/corpus/uploaded")
 async def list_corpus_files(
     x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
 ):
@@ -399,7 +399,7 @@ async def list_corpus_files(
     }
 
 
-@router.get("/corpus/files/{file_id}")
+@router.get("/corpus/uploaded/{file_id}")
 async def get_corpus_file_info(
     file_id: str,
     x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
@@ -428,7 +428,7 @@ async def get_corpus_file_info(
     return response
 
 
-@router.get("/corpus/files/{file_id}/download")
+@router.get("/corpus/uploaded/{file_id}/download")
 async def download_corpus_file(
     file_id: str,
     x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
@@ -453,7 +453,7 @@ async def download_corpus_file(
     )
 
 
-@router.delete("/corpus/files/{file_id}")
+@router.delete("/corpus/uploaded/{file_id}")
 async def delete_corpus_file(
     file_id: str,
     x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")

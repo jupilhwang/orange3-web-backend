@@ -274,8 +274,8 @@ class DatabaseStorage(StorageBackend):
         if original_filename is None:
             original_filename = filename
         
-        # Use original filename as file_id (unique within tenant)
-        file_id = original_filename
+        # Generate UUID for file ID
+        file_id = generate_uuid()
         checksum = hashlib.sha256(content).hexdigest()
         
         async with self._session_maker() as session:
@@ -290,7 +290,7 @@ class DatabaseStorage(StorageBackend):
             )
             
             file_entry = FileStorageDB(
-                id=generate_uuid(),  # Internal DB ID
+                id=file_id,  # Use the same UUID for DB ID and returned ID
                 tenant_id=tenant_id,
                 filename=original_filename,
                 original_filename=original_filename,
@@ -303,10 +303,10 @@ class DatabaseStorage(StorageBackend):
             session.add(file_entry)
             await session.commit()
             
-            logger.info(f"Saved file to database: {original_filename} ({len(content)} bytes)")
+            logger.info(f"Saved file to database: {original_filename} (id={file_id}, {len(content)} bytes)")
             
             return StoredFile(
-                id=file_id,
+                id=file_id,  # Return UUID, not filename
                 filename=original_filename,
                 original_filename=original_filename,
                 content_type=content_type,

@@ -70,8 +70,10 @@ def _parse_with_orange3(file_path: str, filename: str) -> dict:
                 "values": ""
             })
         
+        # 항상 원본 파일명 사용 (임시파일명이 data.name에 들어갈 수 있음)
+        display_name = Path(filename).stem  # 확장자 제거한 파일명
         return {
-            "name": data.name or filename,
+            "name": display_name,
             "instances": len(data),
             "features": len(data.domain.attributes),
             "missingValues": data.has_missing(),
