@@ -9,12 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import StaticPool
 
+from .paths import get_database_url
+
 # Database URL - SQLite with aiosqlite driver
-DATABASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    f"sqlite+aiosqlite:///{DATABASE_DIR}/orange_web.db"
-)
+# Uses DATABASE_URL env var, or DATABASE_DIR env var, or defaults to app folder
+DATABASE_URL = get_database_url()
 
 # Create async engine
 # For SQLite, we use StaticPool to share connections in async context

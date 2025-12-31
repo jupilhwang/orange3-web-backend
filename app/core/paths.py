@@ -5,11 +5,13 @@ Centralized path management with environment variable support.
 For systemd deployment with DynamicUser, set environment variables to writable directories.
 
 Environment Variables:
+    DATABASE_DIR: Directory for SQLite database (default: {app_root})
     UPLOAD_DIR: Base directory for file uploads (default: {app_root}/uploads)
     CORPUS_DIR: Directory for corpus files (default: {UPLOAD_DIR}/corpus)
     DATASETS_CACHE_DIR: Directory for datasets cache (default: {app_root}/datasets_cache)
 
 Example systemd configuration:
+    Environment="DATABASE_DIR=/var/lib/orange3-web-backend"
     Environment="UPLOAD_DIR=/var/lib/orange3-web-backend/uploads"
     Environment="CORPUS_DIR=/var/lib/orange3-web-backend/uploads/corpus"
     Environment="DATASETS_CACHE_DIR=/var/lib/orange3-web-backend/datasets_cache"
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 APP_ROOT = Path(__file__).parent.parent.parent
 
 # Default paths (relative to app root)
+_DEFAULT_DATABASE_DIR = APP_ROOT
 _DEFAULT_UPLOAD_DIR = APP_ROOT / "uploads"
 _DEFAULT_CORPUS_DIR = _DEFAULT_UPLOAD_DIR / "corpus"
 _DEFAULT_DATASETS_CACHE_DIR = APP_ROOT / "datasets_cache"
@@ -60,6 +63,32 @@ def _get_path_from_env(env_var: str, default: Path) -> Path:
         logger.warning(f"Error creating directory {path}: {e}")
     
     return path
+
+
+def get_database_dir() -> Path:
+    """
+    Get the database directory.
+    
+    Uses DATABASE_DIR environment variable if set,
+    otherwise defaults to {app_root}
+    """
+    return _get_path_from_env("DATABASE_DIR", _DEFAULT_DATABASE_DIR)
+
+
+def get_database_url() -> str:
+    """
+    Get the SQLite database URL.
+    
+    Uses DATABASE_URL environment variable if set,
+    otherwise constructs from DATABASE_DIR.
+    """
+    env_url = os.environ.get("DATABASE_URL")
+    if env_url:
+        return env_url
+    
+    db_dir = get_database_dir()
+    db_path = db_dir / "orange_web.db"
+    return f"sqlite+aiosqlite:///{db_path}"
 
 
 def get_upload_dir() -> Path:

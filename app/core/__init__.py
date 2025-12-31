@@ -37,6 +37,8 @@ from .tenant import (
     get_current_tenant,
 )
 from .paths import (
+    get_database_dir,
+    get_database_url,
     get_upload_dir,
     get_corpus_dir,
     get_datasets_cache_dir,
@@ -71,6 +73,8 @@ __all__ = [
     "TenantManager",
     "get_current_tenant",
     # paths
+    "get_database_dir",
+    "get_database_url",
     "get_upload_dir",
     "get_corpus_dir",
     "get_datasets_cache_dir",
