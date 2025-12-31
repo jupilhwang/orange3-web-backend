@@ -225,14 +225,34 @@ async def get_scatter_plot_data(
         valid_x = x_col[valid_mask]
         valid_y = y_col[valid_mask]
         
+        # Handle empty data case
+        if len(valid_x) == 0 or len(valid_y) == 0:
+            return {
+                "points": [],
+                "xLabel": axis_x_name,
+                "yLabel": axis_y_name,
+                "xMin": 0,
+                "xMax": 1,
+                "yMin": 0,
+                "yMax": 1,
+                "classes": class_names if class_names else None,
+                "classColors": list(class_colors.values()) if class_colors else None,
+                "variables": variables,
+                "totalPoints": 0,
+                "instanceCount": len(data),
+                "error": "No valid data points"
+            }
+        
         x_min = float(np.nanmin(valid_x))
         x_max = float(np.nanmax(valid_x))
         y_min = float(np.nanmin(valid_y))
         y_max = float(np.nanmax(valid_y))
         
-        # Add padding
-        x_padding = (x_max - x_min) * 0.05
-        y_padding = (y_max - y_min) * 0.05
+        # Add padding (handle case where min == max)
+        x_range = x_max - x_min if x_max != x_min else 1
+        y_range = y_max - y_min if y_max != y_min else 1
+        x_padding = x_range * 0.05
+        y_padding = y_range * 0.05
         
         return {
             "points": points,
