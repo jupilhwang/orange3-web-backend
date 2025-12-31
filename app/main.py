@@ -87,7 +87,7 @@ from .widgets import (
     word_cloud_router,
     data_info_router,
 )
-from .core.paths import get_upload_dir
+from .core.config import get_upload_dir
 from .routes import (
     workflow_router,
     websocket_endpoint as workflow_ws_endpoint,

@@ -19,7 +19,7 @@ from ..core.file_storage import (
     save_file, get_file, get_file_metadata, delete_file, list_files,
     STORAGE_TYPE, StoredFile
 )
-from ..core.paths import get_tenant_upload_dir
+from ..core.config import get_tenant_upload_dir
 
 logger = logging.getLogger(__name__)
 

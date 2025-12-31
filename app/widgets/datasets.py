@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from ..core.paths import get_datasets_cache_dir
+from ..core.config import get_datasets_cache_dir
 
 logger = logging.getLogger(__name__)
 

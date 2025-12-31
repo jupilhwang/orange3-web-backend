@@ -5,11 +5,11 @@ Provides a unified interface for file storage with support for:
 - Filesystem storage (default, for single server)
 - Database storage (for multi-server without shared filesystem)
 
-Configuration via environment variable:
-    STORAGE_TYPE: 'filesystem' (default) or 'database'
+Configuration (priority: config file > env var > default):
+    storage.type: 'filesystem' (default) or 'database'
+    storage.max_db_file_size: Maximum file size for DB storage (default: 50MB)
 """
 
-import os
 import hashlib
 import logging
 from abc import ABC, abstractmethod
@@ -21,16 +21,15 @@ from dataclasses import dataclass
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .paths import get_upload_dir, get_corpus_dir, get_tenant_upload_dir, get_tenant_corpus_dir
+from .config import get_config, get_upload_dir, get_corpus_dir, get_tenant_upload_dir, get_tenant_corpus_dir
 from .db_models import FileStorageDB, generate_uuid
 
 logger = logging.getLogger(__name__)
 
-# Storage type configuration
-STORAGE_TYPE = os.environ.get('STORAGE_TYPE', 'filesystem')  # 'filesystem' or 'database'
-
-# Maximum file size for database storage (50MB)
-MAX_DB_FILE_SIZE = int(os.environ.get('MAX_DB_FILE_SIZE', 50 * 1024 * 1024))
+# Get storage configuration
+_config = get_config()
+STORAGE_TYPE = _config.storage.type
+MAX_DB_FILE_SIZE = _config.storage.max_db_file_size
 
 
 @dataclass

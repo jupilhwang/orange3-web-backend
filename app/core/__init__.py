@@ -1,12 +1,27 @@
 """
 Core infrastructure modules for Orange3 Web Backend.
+- config: Configuration management (file + environment variables)
 - database: Database connection and session management
 - db_models: SQLAlchemy ORM models
 - locks: Async lock utilities
 - tenant: Multi-tenant management
-- paths: Centralized path configuration with environment variable support
+- file_storage: File storage abstraction (filesystem/database)
 """
 
+from .config import (
+    get_config,
+    get_config_manager,
+    get_setting,
+    get_database_dir,
+    get_database_url,
+    get_upload_dir,
+    get_corpus_dir,
+    get_datasets_cache_dir,
+    get_tenant_upload_dir,
+    get_tenant_corpus_dir,
+    init_directories,
+    APP_ROOT,
+)
 from .database import (
     Base,
     engine,
@@ -47,17 +62,21 @@ from .tenant import (
     TenantManager,
     get_current_tenant,
 )
-from .paths import (
-    get_database_dir,
-    get_database_url,
-    get_upload_dir,
-    get_corpus_dir,
-    get_datasets_cache_dir,
-    get_tenant_upload_dir,
-    get_tenant_corpus_dir,
-)
 
 __all__ = [
+    # config
+    "get_config",
+    "get_config_manager",
+    "get_setting",
+    "get_database_dir",
+    "get_database_url",
+    "get_upload_dir",
+    "get_corpus_dir",
+    "get_datasets_cache_dir",
+    "get_tenant_upload_dir",
+    "get_tenant_corpus_dir",
+    "init_directories",
+    "APP_ROOT",
     # database
     "Base",
     "engine",
@@ -93,13 +112,5 @@ __all__ = [
     # tenant
     "TenantManager",
     "get_current_tenant",
-    # paths
-    "get_database_dir",
-    "get_database_url",
-    "get_upload_dir",
-    "get_corpus_dir",
-    "get_datasets_cache_dir",
-    "get_tenant_upload_dir",
-    "get_tenant_corpus_dir",
 ]
 
