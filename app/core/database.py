@@ -1,6 +1,17 @@
 """
-Database configuration for Orange3 Web Backend
-Using SQLite with aiosqlite for async operations
+Database configuration for Orange3 Web Backend.
+
+Supports multiple databases via DATABASE_URL environment variable:
+    - SQLite (default): sqlite+aiosqlite:///path/to/db.db
+    - PostgreSQL: postgresql+asyncpg://user:pass@host:5432/dbname
+    - MySQL/MariaDB: mysql+aiomysql://user:pass@host:3306/dbname
+    - Oracle: oracle+oracledb://user:pass@host:1521/dbname
+
+Required packages for each database:
+    - SQLite: aiosqlite (included by default)
+    - PostgreSQL: asyncpg
+    - MySQL: aiomysql
+    - Oracle: oracledb
 """
 import os
 from typing import AsyncGenerator

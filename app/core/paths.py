@@ -5,13 +5,26 @@ Centralized path management with environment variable support.
 For systemd deployment with DynamicUser, set environment variables to writable directories.
 
 Environment Variables:
-    DATABASE_DIR: Directory for SQLite database (default: {app_root})
+    DATABASE_URL: Full database connection URL (supports multiple DB types)
+                  - SQLite: sqlite+aiosqlite:///path/to/db.db
+                  - PostgreSQL: postgresql+asyncpg://user:pass@host:5432/dbname
+                  - MySQL: mysql+aiomysql://user:pass@host:3306/dbname
+                  - Oracle: oracle+oracledb://user:pass@host:1521/dbname
+    DATABASE_DIR: Directory for SQLite database (default: {app_root}, ignored if DATABASE_URL is set)
     UPLOAD_DIR: Base directory for file uploads (default: {app_root}/uploads)
     CORPUS_DIR: Directory for corpus files (default: {UPLOAD_DIR}/corpus)
     DATASETS_CACHE_DIR: Directory for datasets cache (default: {app_root}/datasets_cache)
 
 Example systemd configuration:
+    # For SQLite (default):
     Environment="DATABASE_DIR=/var/lib/orange3-web-backend"
+    
+    # For PostgreSQL:
+    Environment="DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/orange3"
+    
+    # For MySQL:
+    Environment="DATABASE_URL=mysql+aiomysql://user:pass@localhost:3306/orange3"
+    
     Environment="UPLOAD_DIR=/var/lib/orange3-web-backend/uploads"
     Environment="CORPUS_DIR=/var/lib/orange3-web-backend/uploads/corpus"
     Environment="DATASETS_CACHE_DIR=/var/lib/orange3-web-backend/datasets_cache"

@@ -13,10 +13,21 @@ websockets>=15.0,<16.0
 # HTTP client
 httpx>=0.28.0,<1.0
 
-# Database (SQLite + async)
+# Database
 sqlalchemy>=2.0.45
-aiosqlite>=0.22.0
 greenlet>=3.3.0
+
+# SQLite (default)
+aiosqlite>=0.22.0
+
+# PostgreSQL (optional - uncomment if using PostgreSQL)
+# asyncpg>=0.30.0
+
+# MySQL/MariaDB (optional - uncomment if using MySQL)
+# aiomysql>=0.2.0
+
+# Oracle (optional - uncomment if using Oracle)
+# oracledb>=2.5.0
 
 # Orange3 Data Mining
 orange3==3.40.0
