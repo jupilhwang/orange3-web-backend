@@ -22,8 +22,19 @@ from .db_models import (
     NodeDB,
     LinkDB,
     AnnotationDB,
+    FileStorageDB,
     workflow_db_to_pydantic,
     generate_uuid,
+)
+from .file_storage import (
+    StoredFile,
+    get_storage,
+    save_file,
+    get_file,
+    get_file_metadata,
+    delete_file,
+    list_files,
+    STORAGE_TYPE,
 )
 from .locks import (
     SimpleLockManager,
@@ -61,8 +72,18 @@ __all__ = [
     "NodeDB",
     "LinkDB",
     "AnnotationDB",
+    "FileStorageDB",
     "workflow_db_to_pydantic",
     "generate_uuid",
+    # file_storage
+    "StoredFile",
+    "get_storage",
+    "save_file",
+    "get_file",
+    "get_file_metadata",
+    "delete_file",
+    "list_files",
+    "STORAGE_TYPE",
     # locks
     "SimpleLockManager",
     "lock_workflow",

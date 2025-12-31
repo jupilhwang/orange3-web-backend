@@ -9,7 +9,7 @@ import json
 
 from sqlalchemy import (
     Column, String, Text, Integer, Float, Boolean, 
-    DateTime, ForeignKey, JSON, Index
+    DateTime, ForeignKey, JSON, Index, LargeBinary
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -18,6 +18,43 @@ from .database import Base
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
+
+
+class FileStorageDB(Base):
+    """
+    File storage database model.
+    Stores uploaded files in database (BLOB) for multi-server environments.
+    """
+    __tablename__ = "file_storage"
+    
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    
+    # File metadata
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), default="application/octet-stream")
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA256
+    
+    # File category: 'upload', 'corpus', 'dataset', etc.
+    category: Mapped[str] = mapped_column(String(50), default="upload", index=True)
+    
+    # Actual file data (BLOB)
+    file_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Indexes
+    __table_args__ = (
+        Index("idx_file_tenant_category", "tenant_id", "category"),
+        Index("idx_file_filename", "filename"),
+    )
+    
+    def __repr__(self):
+        return f"<FileStorage(id={self.id}, filename={self.filename}, size={self.file_size})>"
 
 
 class TenantDB(Base):
