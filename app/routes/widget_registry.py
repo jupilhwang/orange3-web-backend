@@ -116,12 +116,35 @@ def get_discovered_widgets():
     """Get or discover widgets from Orange3 installation.
     
     Priority:
-    1. Use OrangeRegistryAdapter if available (most complete - 105+ widgets)
-    2. Fall back to discover_widgets() if registry not available
+    1. Use discover_widgets() (includes Orange3-Text and all add-ons)
+    2. Fall back to OrangeRegistryAdapter if discover_widgets() fails
+    
+    Note: discover_widgets() uses AST parsing and finds both Orange3 core
+    and Orange3-Text widgets reliably across different environments.
     """
     global _discovered_widgets
     if _discovered_widgets is None:
-        # Try to use the registry from main.py first (has all 105 widgets)
+        # Primary: Use discover_widgets() - includes Orange3-Text widgets
+        if DISCOVERY_AVAILABLE:
+            try:
+                logger.info("Using discover_widgets() for widget discovery...")
+                _discovered_widgets = discover_widgets()
+                total = _discovered_widgets.get('total', 0)
+                categories = _discovered_widgets.get('categories', [])
+                logger.info(f"Discovered {total} widgets in {len(categories)} categories")
+                
+                # Log categories for debugging
+                for cat in categories:
+                    cat_name = cat.get('name', 'Unknown')
+                    cat_widgets = len(cat.get('widgets', []))
+                    logger.debug(f"  - {cat_name}: {cat_widgets} widgets")
+                
+                if total > 0:
+                    return _discovered_widgets
+            except Exception as e:
+                logger.warning(f"discover_widgets() failed: {e}")
+        
+        # Fallback: Use OrangeRegistryAdapter
         if _registry_getter and ORANGE_AVAILABLE:
             registry = _registry_getter()
             if registry:
@@ -129,7 +152,6 @@ def get_discovered_widgets():
                     categories = registry.list_categories()
                     widgets = registry.list_widgets()
                     
-                    # Convert to discovery format
                     _discovered_widgets = {
                         "categories": [
                             {
@@ -143,44 +165,14 @@ def get_discovered_widgets():
                         "widgets": widgets,
                         "total": len(widgets)
                     }
-                    logger.info(f"Using OrangeRegistryAdapter: {len(widgets)} widgets in {len(categories)} categories")
+                    logger.info(f"Fallback to OrangeRegistryAdapter: {len(widgets)} widgets")
                     return _discovered_widgets
                 except Exception as e:
-                    logger.warning(f"Failed to use registry: {e}")
+                    logger.warning(f"OrangeRegistryAdapter failed: {e}")
         
-        # Fallback to discover_widgets()
-        orange3_path = None
-        
-        # 1. Environment variable (highest priority)
-        env_path = os.environ.get('ORANGE3_WIDGETS_PATH')
-        if env_path and os.path.isdir(env_path):
-            orange3_path = env_path
-            logger.info(f"Using ORANGE3_WIDGETS_PATH: {orange3_path}")
-        
-        # 2. Try importing Orange module directly (most reliable)
-        if not orange3_path:
-            orange3_path = _get_orange3_path_from_import()
-        
-        # 3. Search in site-packages as fallback
-        if not orange3_path:
-            possible_paths = []
-            for sp in _get_site_packages_paths():
-                possible_paths.append(os.path.join(sp, "Orange", "widgets"))
-            possible_paths.append(os.path.expanduser("~/works/test/orange3/orange3/Orange/widgets"))
-            
-            for path in possible_paths:
-                if os.path.isdir(path) and os.path.isdir(os.path.join(path, "data")):
-                    orange3_path = path
-                    logger.info(f"Found Orange3 widgets at: {orange3_path}")
-                    break
-        
-        if orange3_path and DISCOVERY_AVAILABLE:
-            logger.info(f"Discovering widgets from: {orange3_path}")
-            _discovered_widgets = discover_widgets(orange3_path)
-            logger.info(f"Discovered {_discovered_widgets.get('total', 0)} widgets")
-        else:
-            logger.warning("Orange3 widgets path not found or discovery not available")
-            _discovered_widgets = {"categories": [], "widgets": [], "total": 0}
+        # Last resort: empty result
+        logger.warning("No widgets discovered")
+        _discovered_widgets = {"categories": [], "widgets": [], "total": 0}
     
     return _discovered_widgets
 
