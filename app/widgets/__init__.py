@@ -40,6 +40,7 @@ from .word_cloud import router as word_cloud_router
 
 # Import utility routers
 from .data_info import router as data_info_router
+from .feature_statistics import router as feature_statistics_router
 
 __all__ = [
     # Data widgets
@@ -72,5 +73,6 @@ __all__ = [
     "word_cloud_router",
     # Utility routers
     "data_info_router",
+    "feature_statistics_router",
 ]
 

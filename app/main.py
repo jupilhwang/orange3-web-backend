@@ -86,6 +86,7 @@ from .widgets import (
     bag_of_words_router,
     word_cloud_router,
     data_info_router,
+    feature_statistics_router,
 )
 from .core.config import get_upload_dir
 from .routes import (
@@ -617,6 +618,7 @@ api_v1.include_router(preprocess_text_router)
 api_v1.include_router(bag_of_words_router)
 api_v1.include_router(word_cloud_router)
 api_v1.include_router(data_info_router)
+api_v1.include_router(feature_statistics_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)
