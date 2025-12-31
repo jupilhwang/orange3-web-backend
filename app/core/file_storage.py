@@ -101,11 +101,9 @@ class FilesystemStorage(StorageBackend):
         else:
             return get_tenant_upload_dir(tenant_id)
     
-    def _generate_filename(self, original_filename: str) -> tuple[str, str]:
-        """Generate unique filename with UUID prefix."""
-        file_id = generate_uuid()
-        safe_filename = f"{file_id}_{original_filename}"
-        return file_id, safe_filename
+    def _generate_file_id(self) -> str:
+        """Generate unique file ID."""
+        return generate_uuid()
     
     async def save(
         self,
@@ -116,24 +114,24 @@ class FilesystemStorage(StorageBackend):
         category: str = "upload",
         original_filename: Optional[str] = None,
     ) -> StoredFile:
-        """Save file to filesystem."""
+        """Save file to filesystem. Uses original filename (tenant separation ensures uniqueness)."""
         if original_filename is None:
             original_filename = filename
         
-        file_id, safe_filename = self._generate_filename(original_filename)
+        file_id = self._generate_file_id()
         category_dir = self._get_category_dir(tenant_id, category)
-        file_path = category_dir / safe_filename
+        file_path = category_dir / original_filename
         
         # Calculate checksum
         checksum = hashlib.sha256(content).hexdigest()
         
-        # Write file
+        # Write file (overwrite if exists)
         file_path.write_bytes(content)
         logger.info(f"Saved file to filesystem: {file_path}")
         
         return StoredFile(
             id=file_id,
-            filename=safe_filename,
+            filename=original_filename,
             original_filename=original_filename,
             content_type=content_type,
             file_size=len(content),
@@ -145,8 +143,7 @@ class FilesystemStorage(StorageBackend):
         )
     
     async def get(self, file_id: str, tenant_id: Optional[str] = None) -> Optional[bytes]:
-        """Get file content from filesystem."""
-        # Search in all possible locations
+        """Get file content from filesystem. file_id is the filename."""
         search_dirs = []
         
         if tenant_id:
@@ -165,14 +162,15 @@ class FilesystemStorage(StorageBackend):
         for search_dir in search_dirs:
             if not search_dir.exists():
                 continue
-            for file_path in search_dir.iterdir():
-                if file_path.is_file() and file_path.name.startswith(file_id):
-                    return file_path.read_bytes()
+            # file_id is the filename
+            file_path = search_dir / file_id
+            if file_path.is_file():
+                return file_path.read_bytes()
         
         return None
     
     async def get_metadata(self, file_id: str, tenant_id: Optional[str] = None) -> Optional[StoredFile]:
-        """Get file metadata from filesystem."""
+        """Get file metadata from filesystem. file_id is the filename."""
         search_dirs = []
         
         if tenant_id:
@@ -184,23 +182,20 @@ class FilesystemStorage(StorageBackend):
         for category, search_dir in search_dirs:
             if not search_dir.exists():
                 continue
-            for file_path in search_dir.iterdir():
-                if file_path.is_file() and file_path.name.startswith(file_id):
-                    # Extract original filename from stored filename
-                    parts = file_path.name.split("_", 1)
-                    original_filename = parts[1] if len(parts) > 1 else file_path.name
-                    
-                    return StoredFile(
-                        id=file_id,
-                        filename=file_path.name,
-                        original_filename=original_filename,
-                        content_type="application/octet-stream",
-                        file_size=file_path.stat().st_size,
-                        category=category,
-                        tenant_id=tenant_id or "unknown",
-                        file_path=str(file_path),
-                        created_at=datetime.fromtimestamp(file_path.stat().st_ctime),
-                    )
+            # file_id is the filename
+            file_path = search_dir / file_id
+            if file_path.is_file():
+                return StoredFile(
+                    id=file_id,
+                    filename=file_path.name,
+                    original_filename=file_path.name,
+                    content_type="application/octet-stream",
+                    file_size=file_path.stat().st_size,
+                    category=category,
+                    tenant_id=tenant_id or "unknown",
+                    file_path=str(file_path),
+                    created_at=datetime.fromtimestamp(file_path.stat().st_ctime),
+                )
         
         return None
     
@@ -236,14 +231,13 @@ class FilesystemStorage(StorageBackend):
                 continue
             for file_path in dir_path.iterdir():
                 if file_path.is_file():
-                    parts = file_path.name.split("_", 1)
-                    file_id = parts[0] if len(parts) > 1 else generate_uuid()
-                    original_filename = parts[1] if len(parts) > 1 else file_path.name
+                    # Use filename as ID (original filename is kept as-is)
+                    file_id = file_path.name
                     
                     files.append(StoredFile(
                         id=file_id,
                         filename=file_path.name,
-                        original_filename=original_filename,
+                        original_filename=file_path.name,
                         content_type="application/octet-stream",
                         file_size=file_path.stat().st_size,
                         category=cat,
@@ -271,7 +265,7 @@ class DatabaseStorage(StorageBackend):
         category: str = "upload",
         original_filename: Optional[str] = None,
     ) -> StoredFile:
-        """Save file to database."""
+        """Save file to database. Uses original filename (tenant separation ensures uniqueness)."""
         if len(content) > MAX_DB_FILE_SIZE:
             raise ValueError(
                 f"File size ({len(content)} bytes) exceeds maximum "
@@ -281,15 +275,25 @@ class DatabaseStorage(StorageBackend):
         if original_filename is None:
             original_filename = filename
         
-        file_id = generate_uuid()
-        safe_filename = f"{file_id}_{original_filename}"
+        # Use original filename as file_id (unique within tenant)
+        file_id = original_filename
         checksum = hashlib.sha256(content).hexdigest()
         
         async with self._session_maker() as session:
+            # Check if file already exists and delete it (overwrite)
+            from sqlalchemy import delete
+            await session.execute(
+                delete(FileStorageDB).where(
+                    FileStorageDB.tenant_id == tenant_id,
+                    FileStorageDB.filename == original_filename,
+                    FileStorageDB.category == category
+                )
+            )
+            
             file_entry = FileStorageDB(
-                id=file_id,
+                id=generate_uuid(),  # Internal DB ID
                 tenant_id=tenant_id,
-                filename=safe_filename,
+                filename=original_filename,
                 original_filename=original_filename,
                 content_type=content_type,
                 file_size=len(content),
@@ -300,11 +304,11 @@ class DatabaseStorage(StorageBackend):
             session.add(file_entry)
             await session.commit()
             
-            logger.info(f"Saved file to database: {safe_filename} ({len(content)} bytes)")
+            logger.info(f"Saved file to database: {original_filename} ({len(content)} bytes)")
             
             return StoredFile(
                 id=file_id,
-                filename=safe_filename,
+                filename=original_filename,
                 original_filename=original_filename,
                 content_type=content_type,
                 file_size=len(content),
