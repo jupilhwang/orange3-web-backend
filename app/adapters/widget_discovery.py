@@ -757,12 +757,47 @@ class WidgetDiscovery:
         return sorted(ports, key=get_priority)
     
     def _get_constant_value(self, node) -> Optional[str]:
-        """Get constant value from AST node."""
+        """Get constant value from AST node.
+        
+        Handles:
+        - Simple constants: "File", 42
+        - Orange3 i18n format: _tr.m[892, "File"] -> "File"
+        - gettext format: _("File") -> "File"
+        """
         if isinstance(node, ast.Constant):
             return node.value
         # Python 3.7 compatibility (ast.Str was deprecated in 3.8, removed in 3.12)
         if hasattr(ast, 'Str') and isinstance(node, ast.Str):
             return node.s
+        
+        # Handle Orange3 i18n format: _tr.m[key, "value"]
+        # AST structure: Subscript(value=Attribute, slice=Tuple)
+        if isinstance(node, ast.Subscript):
+            slice_node = node.slice
+            # Handle Tuple slice: _tr.m[892, "File"]
+            if isinstance(slice_node, ast.Tuple) and len(slice_node.elts) >= 2:
+                # Get the string value (usually second element)
+                for elt in slice_node.elts:
+                    val = self._get_constant_value(elt)
+                    if isinstance(val, str):
+                        return val
+            # Handle Index wrapper (older Python): _tr.m[Index(value=Tuple(...))]
+            elif hasattr(ast, 'Index') and isinstance(slice_node, ast.Index):
+                return self._get_constant_value(slice_node.value)
+        
+        # Handle gettext/i18n function calls: _("File"), tr("File")
+        if isinstance(node, ast.Call):
+            func_name = ''
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+            
+            # Common translation function names
+            if func_name in ('_', 'tr', 'gettext', 'ngettext', 'N_'):
+                if node.args:
+                    return self._get_constant_value(node.args[0])
+        
         return None
     
     def _generate_widget_id(self, name: str) -> str:
