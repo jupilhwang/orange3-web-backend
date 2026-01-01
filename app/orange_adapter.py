@@ -554,3 +554,441 @@ def get_availability() -> Dict[str, bool]:
     }
 
 
+# =============================================================================
+# Widget Discovery
+# Automatically discovers Orange3 widgets by scanning widget directories
+# and parsing Python files using AST (no import required).
+# =============================================================================
+
+import os
+import ast
+import re
+import sys
+import site
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def _get_orange3_path_from_import() -> Optional[str]:
+    """Try to get Orange3 widgets path by importing Orange module."""
+    try:
+        import Orange
+        orange_dir = os.path.dirname(Orange.__file__)
+        widgets_path = os.path.join(orange_dir, 'widgets')
+        if os.path.exists(widgets_path):
+            return widgets_path
+    except ImportError:
+        pass
+    return None
+
+
+def _get_orange3_text_path_from_import() -> Optional[str]:
+    """Try to get Orange3-Text widgets path."""
+    try:
+        import orangecontrib.text
+        text_dir = os.path.dirname(orangecontrib.text.__file__)
+        widgets_path = os.path.join(text_dir, 'widgets')
+        if os.path.exists(widgets_path):
+            return widgets_path
+    except ImportError:
+        pass
+    return None
+
+
+def _get_site_packages_paths() -> List[str]:
+    """Get all possible site-packages paths dynamically."""
+    paths = []
+    py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    
+    for p in sys.path:
+        if 'site-packages' in p and os.path.isdir(p):
+            paths.append(p)
+    
+    try:
+        for sp in site.getsitepackages():
+            if sp and os.path.isdir(sp):
+                paths.append(sp)
+    except Exception:
+        pass
+    
+    venv_path = os.environ.get('VIRTUAL_ENV')
+    if venv_path:
+        linux_path = os.path.join(venv_path, 'lib', py_version, 'site-packages')
+        if os.path.isdir(linux_path):
+            paths.append(linux_path)
+    
+    return list(dict.fromkeys(paths))
+
+
+# Category colors and priorities
+CATEGORY_COLORS = {
+    "Data": "#FFD39F",
+    "Transform": "#FF9D5E",
+    "Visualize": "#FFB7B1",
+    "Model": "#FAC1D9",
+    "Evaluate": "#C3F3F3",
+    "Unsupervised": "#CAE1EF",
+    "Text Mining": "#B8E0D2",
+}
+
+CATEGORY_PRIORITIES = {
+    "Data": 1,
+    "Transform": 2,
+    "Visualize": 3,
+    "Model": 4,
+    "Evaluate": 5,
+    "Unsupervised": 6,
+    "Text Mining": 7,
+}
+
+
+class WidgetDiscovery:
+    """Discovers Orange3 widgets from the filesystem using AST parsing."""
+    
+    WIDGET_NAME_OVERRIDES = {
+        "Column Statistics": "Feature Statistics",
+    }
+    
+    def __init__(self, orange3_path: Optional[str] = None, orange3_text_path: Optional[str] = None):
+        self.orange3_path = orange3_path or self._find_orange3_path()
+        self.orange3_text_path = orange3_text_path or _get_orange3_text_path_from_import()
+        self.categories: Dict[str, Dict] = {}
+        self.widgets: List[Dict] = []
+    
+    def _find_orange3_path(self) -> Optional[str]:
+        """Find Orange3 installation path."""
+        env_path = os.environ.get('ORANGE3_WIDGETS_PATH')
+        if env_path and os.path.isdir(env_path):
+            return env_path
+        
+        import_path = _get_orange3_path_from_import()
+        if import_path:
+            return import_path
+        
+        for sp in _get_site_packages_paths():
+            path = os.path.join(sp, "Orange", "widgets")
+            if os.path.isdir(path) and os.path.isdir(os.path.join(path, "data")):
+                return path
+        
+        return None
+    
+    def discover(self) -> Dict[str, Any]:
+        """Discover all widgets and categories."""
+        self.categories = {}
+        self.widgets = []
+        
+        if self.orange3_path and os.path.exists(self.orange3_path):
+            self._discover_orange3_widgets()
+        
+        if self.orange3_text_path and os.path.exists(self.orange3_text_path):
+            self._discover_text_widgets()
+        
+        if not self.widgets:
+            return {"categories": [], "widgets": [], "total": 0}
+        
+        return self._format_result()
+    
+    def _discover_orange3_widgets(self):
+        """Discover Orange3 core widgets."""
+        widget_dirs = ['data', 'visualize', 'model', 'evaluate', 'unsupervised']
+        
+        for subdir in widget_dirs:
+            dir_path = os.path.join(self.orange3_path, subdir)
+            if not os.path.exists(dir_path):
+                continue
+            
+            cat_info = self._read_category_info(dir_path, subdir)
+            self._scan_widget_directory(dir_path, cat_info)
+    
+    def _discover_text_widgets(self):
+        """Discover Orange3-Text widgets."""
+        cat_info = {
+            'name': 'Text Mining',
+            'background': CATEGORY_COLORS.get('Text Mining', '#B8E0D2'),
+            'priority': CATEGORY_PRIORITIES.get('Text Mining', 7)
+        }
+        self._scan_widget_directory(self.orange3_text_path, cat_info, icon_prefix='text/')
+    
+    def _scan_widget_directory(self, dir_path: str, cat_info: Dict, icon_prefix: str = ''):
+        """Scan a widget directory."""
+        for filename in sorted(os.listdir(dir_path)):
+            if filename.startswith('ow') and filename.endswith('.py'):
+                filepath = os.path.join(dir_path, filename)
+                widget_info = self._extract_widget_info(filepath)
+                
+                if widget_info and widget_info.get('name'):
+                    widget_category = widget_info.get('category') or cat_info['name']
+                    
+                    if widget_category not in self.categories:
+                        self.categories[widget_category] = {
+                            'name': widget_category,
+                            'background': CATEGORY_COLORS.get(widget_category, cat_info['background']),
+                            'priority': CATEGORY_PRIORITIES.get(widget_category, 10),
+                            'widgets': []
+                        }
+                    
+                    icon = widget_info.get('icon', 'icons/Unknown.svg')
+                    if icon_prefix and not icon.startswith('http'):
+                        icon = icon_prefix + icon.replace('icons/', '')
+                    
+                    display_name = self.WIDGET_NAME_OVERRIDES.get(widget_info['name'], widget_info['name'])
+                    
+                    widget_data = {
+                        'id': self._generate_widget_id(widget_info['name']),
+                        'name': display_name,
+                        'description': widget_info.get('description', ''),
+                        'icon': icon,
+                        'category': widget_category,
+                        'priority': widget_info.get('priority', 9999),
+                        'inputs': widget_info.get('inputs', []),
+                        'outputs': widget_info.get('outputs', []),
+                        'keywords': widget_info.get('keywords', []),
+                        'source': 'orange3-text' if icon_prefix else 'orange3',
+                    }
+                    
+                    self.categories[widget_category]['widgets'].append(widget_data)
+                    self.widgets.append(widget_data)
+    
+    def _read_category_info(self, dir_path: str, default_name: str) -> Dict:
+        """Read category info from __init__.py."""
+        cat_name = default_name.capitalize()
+        cat_bg = CATEGORY_COLORS.get(cat_name, '#999999')
+        cat_priority = CATEGORY_PRIORITIES.get(cat_name, 10)
+        
+        init_file = os.path.join(dir_path, '__init__.py')
+        if os.path.exists(init_file):
+            try:
+                with open(init_file, 'r') as f:
+                    content = f.read()
+                
+                name_match = re.search(r'NAME\s*=\s*["\']([^"\']+)["\']', content)
+                bg_match = re.search(r'BACKGROUND\s*=\s*["\']([^"\']+)["\']', content)
+                priority_match = re.search(r'PRIORITY\s*=\s*(\d+)', content)
+                
+                if name_match:
+                    cat_name = name_match.group(1)
+                if bg_match:
+                    cat_bg = bg_match.group(1)
+                if priority_match:
+                    cat_priority = int(priority_match.group(1))
+            except Exception:
+                pass
+        
+        return {'name': cat_name, 'background': cat_bg, 'priority': cat_priority}
+    
+    def _extract_widget_info(self, filepath: str) -> Optional[Dict]:
+        """Extract widget info from Python file using AST parsing."""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            tree = ast.parse(content)
+            info = {
+                'name': None,
+                'description': None,
+                'icon': None,
+                'category': None,
+                'priority': 9999,
+                'inputs': [],
+                'outputs': [],
+                'keywords': [],
+            }
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and self._is_widget_class(node):
+                    for item in node.body:
+                        if isinstance(item, ast.Assign):
+                            self._extract_assign(item, info)
+                        elif isinstance(item, ast.ClassDef):
+                            if item.name == 'Inputs':
+                                info['inputs'] = self._extract_io_class(item)
+                            elif item.name == 'Outputs':
+                                info['outputs'] = self._extract_io_class(item)
+                    
+                    if info['name']:
+                        return info
+            
+            return None
+        except Exception:
+            return None
+    
+    def _is_widget_class(self, node: ast.ClassDef) -> bool:
+        """Check if a class is a widget class."""
+        for base in node.bases:
+            base_name = ''
+            if isinstance(base, ast.Name):
+                base_name = base.id
+            elif isinstance(base, ast.Attribute):
+                base_name = base.attr
+            
+            if 'Widget' in base_name or base_name.startswith('OW'):
+                return True
+        return False
+    
+    def _extract_assign(self, item: ast.Assign, info: Dict):
+        """Extract info from simple assignment."""
+        for target in item.targets:
+            if isinstance(target, ast.Name):
+                name = target.id
+                value = self._get_constant_value(item.value)
+                
+                if name == 'name' and value:
+                    info['name'] = value
+                elif name == 'description' and value:
+                    info['description'] = value
+                elif name == 'icon' and value:
+                    info['icon'] = value
+                elif name == 'category' and value:
+                    info['category'] = value
+                elif name == 'priority' and isinstance(item.value, ast.Constant):
+                    if isinstance(item.value.value, (int, float)):
+                        info['priority'] = int(item.value.value)
+    
+    def _extract_io_class(self, class_node: ast.ClassDef) -> List[Dict]:
+        """Extract inputs or outputs from nested class."""
+        ports = []
+        
+        for item in class_node.body:
+            if isinstance(item, ast.Assign):
+                for target in item.targets:
+                    if isinstance(target, ast.Name):
+                        port_id = target.id
+                        port_info = self._parse_io_call(item.value, port_id)
+                        if port_info:
+                            ports.append(port_info)
+        
+        return ports
+    
+    def _parse_io_call(self, node, port_id: str) -> Optional[Dict]:
+        """Parse Input(...) or Output(...) call."""
+        if not isinstance(node, ast.Call):
+            return None
+        
+        func_name = ''
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+        
+        if func_name not in ('Input', 'Output'):
+            return None
+        
+        port_name = port_id
+        if node.args and len(node.args) >= 1:
+            name_val = self._get_constant_value(node.args[0])
+            if name_val:
+                port_name = name_val
+        
+        port_type = 'Data'
+        if node.args and len(node.args) >= 2:
+            type_node = node.args[1]
+            if isinstance(type_node, ast.Name):
+                port_type = self._simplify_type_name(type_node.id)
+            elif isinstance(type_node, ast.Attribute):
+                port_type = self._simplify_type_name(type_node.attr)
+        
+        return {'id': port_id, 'name': port_name, 'type': port_type}
+    
+    def _simplify_type_name(self, type_name: str) -> str:
+        """Simplify Orange3 type names."""
+        type_map = {
+            'Table': 'Data',
+            'Domain': 'Data',
+            'Learner': 'Learner',
+            'Model': 'Model',
+            'DistMatrix': 'Distance',
+            'Corpus': 'Corpus',
+        }
+        return type_map.get(type_name, type_name)
+    
+    def _get_constant_value(self, node) -> Optional[str]:
+        """Get constant value from AST node."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if hasattr(ast, 'Str') and isinstance(node, ast.Str):
+            return node.s
+        
+        # Handle Orange3 i18n format
+        if isinstance(node, ast.Subscript):
+            slice_node = node.slice
+            if isinstance(slice_node, ast.Tuple) and len(slice_node.elts) >= 2:
+                for elt in slice_node.elts:
+                    val = self._get_constant_value(elt)
+                    if isinstance(val, str):
+                        return val
+        
+        return None
+    
+    def _generate_widget_id(self, name: str) -> str:
+        """Generate a URL-friendly widget ID from name."""
+        widget_id = name.lower()
+        widget_id = re.sub(r'[^a-z0-9]+', '-', widget_id)
+        return widget_id.strip('-')
+    
+    def _format_result(self) -> Dict[str, Any]:
+        """Format the discovery result."""
+        sorted_categories = sorted(
+            self.categories.values(),
+            key=lambda c: c.get('priority', 10)
+        )
+        
+        formatted_categories = []
+        for cat in sorted_categories:
+            if not cat['widgets']:
+                continue
+            
+            sorted_widgets = sorted(cat['widgets'], key=lambda w: (w.get('priority', 9999), w['name']))
+            
+            formatted_categories.append({
+                'name': cat['name'],
+                'color': cat['background'],
+                'priority': cat['priority'],
+                'widgets': sorted_widgets
+            })
+        
+        return {
+            'categories': formatted_categories,
+            'widgets': self.widgets,
+            'total': len(self.widgets)
+        }
+
+
+# Singleton instance
+_discovery_instance: Optional[WidgetDiscovery] = None
+
+
+def get_widget_discovery(orange3_path: Optional[str] = None) -> WidgetDiscovery:
+    """Get or create the widget discovery instance."""
+    global _discovery_instance
+    if _discovery_instance is None:
+        _discovery_instance = WidgetDiscovery(orange3_path)
+    return _discovery_instance
+
+
+def discover_widgets(orange3_path: Optional[str] = None) -> Dict[str, Any]:
+    """Discover all Orange3 widgets."""
+    discovery = get_widget_discovery(orange3_path)
+    return discovery.discover()
+
+
+__all__ = [
+    # Orange3 availability
+    'ORANGE3_AVAILABLE',
+    'get_availability',
+    # Adapters
+    'OrangeRegistryAdapter',
+    'OrangeSchemeAdapter',
+    # Data classes
+    'WebSchemeNode',
+    'WebSchemeLink',
+    'WebAnnotation',
+    # Widget discovery
+    'WidgetDiscovery',
+    'discover_widgets',
+    'get_widget_discovery',
+    'CATEGORY_COLORS',
+    'CATEGORY_PRIORITIES',
+]
+

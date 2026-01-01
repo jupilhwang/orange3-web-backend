@@ -7,7 +7,7 @@ from datetime import datetime
 import uuid
 import xml.etree.ElementTree as ET
 
-from ..models import (
+from .core.models import (
     Workflow, WorkflowNode, WorkflowLink, WorkflowCreate, WorkflowUpdate,
     NodeCreate, NodeUpdate, LinkCreate, LinkUpdate, LinkValidation, LinkCompatibility,
     TextAnnotation, ArrowAnnotation, AnnotationCreate, AnnotationUpdate,

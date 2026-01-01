@@ -50,9 +50,9 @@ logger = logging.getLogger(__name__)
 from .core import init_db, close_db, get_db, async_session_maker
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Import adapters that wrap existing Orange3 code (from adapters/)
+# Import adapters that wrap existing Orange3 code
 try:
-    from .adapters import (
+    from .orange_adapter import (
         OrangeSchemeAdapter, OrangeRegistryAdapter, 
         get_availability, ORANGE3_AVAILABLE
     )
@@ -66,7 +66,7 @@ except ImportError as e:
     def get_availability():
         return {"orange3": False}
 
-from .models import (
+from .core.models import (
     Workflow, WorkflowSummary, WorkflowCreate, WorkflowUpdate,
     WorkflowNode, NodeCreate, NodeUpdate, NodeState,
     WorkflowLink, LinkCreate, LinkUpdate,
@@ -74,9 +74,19 @@ from .models import (
     WidgetDescription, WidgetCategory,
     Position, Rect, Tenant
 )
-# Managers (from core/ and managers/)
+# Managers
 from .core import TenantManager, get_current_tenant
-from .managers import WebSocketManager
+from .websocket_manager import WebSocketManager
+
+# OpenTelemetry
+try:
+    from .core.telemetry import init_telemetry, get_telemetry, TelemetryConfig
+    OTEL_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"OpenTelemetry not available: {e}")
+    OTEL_AVAILABLE = False
+    init_telemetry = None
+    get_telemetry = None
 
 # Widget API routers
 from .widgets import (
@@ -109,13 +119,14 @@ from .widgets import (
 from .core.config import get_upload_dir
 from .routes import (
     workflow_router,
+    widget_registry_router,
     websocket_endpoint as workflow_ws_endpoint,
     get_workflow_adapters,
-    widget_registry_router,
     legacy_widgets_handler,
-    set_widget_registry_getter,
+    set_registry_getter,
+    set_registry_getter as set_widget_registry_getter,
+    set_websocket_manager,
 )
-from .routes.workflow import set_registry_getter, set_websocket_manager
 
 
 # ============================================================================
@@ -155,6 +166,23 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     print("Starting Orange3 Web Backend...")
     print("=" * 60)
+    
+    # Initialize OpenTelemetry
+    if OTEL_AVAILABLE and init_telemetry:
+        otel_endpoint = os.getenv("OTEL_ENDPOINT")
+        otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
+        
+        if otel_enabled:
+            config = TelemetryConfig(
+                service_name="orange3-web-backend",
+                service_version=SERVER_VERSION,
+                environment=os.getenv("ENVIRONMENT", "development"),
+                otel_endpoint=otel_endpoint,
+                enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
+                log_level=os.getenv("LOG_LEVEL", "INFO"),
+            )
+            init_telemetry(app, config)
+            print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
     
     # Load balancer configuration
     # FRONTEND_URL can be comma-separated for multiple frontends
@@ -302,6 +330,35 @@ async def health_check():
         "database": "sqlite",
         "locks": "asyncio",
         "server_start_time": SERVER_START_TIME
+    }
+
+
+@app.get("/internal/metrics")
+async def get_metrics():
+    """Get OpenTelemetry metrics summary."""
+    if OTEL_AVAILABLE and get_telemetry:
+        telemetry = get_telemetry()
+        if telemetry:
+            return telemetry.get_metrics_summary()
+    return {
+        "service": "orange3-web-backend",
+        "version": SERVER_VERSION,
+        "otel_available": OTEL_AVAILABLE,
+        "message": "OpenTelemetry not initialized"
+    }
+
+
+@app.get("/internal/logs")
+async def get_logs(limit: int = 100):
+    """Get recent log entries."""
+    if OTEL_AVAILABLE and get_telemetry:
+        telemetry = get_telemetry()
+        if telemetry:
+            return telemetry.get_logs_response(limit)
+    return {
+        "service": "orange3-web-backend",
+        "total": 0,
+        "logs": []
     }
 
 

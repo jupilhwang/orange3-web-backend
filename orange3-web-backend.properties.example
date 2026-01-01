@@ -99,3 +99,24 @@ log.level=INFO
 # 데이터베이스 쿼리 로그 출력 (database.echo와 동일)
 log.database_echo=false
 
+# =============================================================================
+# OpenTelemetry Configuration
+# =============================================================================
+
+# OTel 활성화 여부
+# 환경변수: OTEL_ENABLED
+otel.enabled=true
+
+# OTLP Collector 엔드포인트 (예: localhost:4318)
+# 설정하지 않으면 내부 수집만 하고 외부 전송 안 함
+# 환경변수: OTEL_ENDPOINT
+# otel.endpoint=localhost:4318
+
+# 콘솔 출력 활성화 (개발/디버깅용)
+# 환경변수: OTEL_CONSOLE
+otel.console=false
+
+# 환경 이름 (development, staging, production)
+# 환경변수: ENVIRONMENT
+otel.environment=development
+

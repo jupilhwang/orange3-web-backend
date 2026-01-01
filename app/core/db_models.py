@@ -234,7 +234,7 @@ class AnnotationDB(Base):
 
 def workflow_db_to_pydantic(db_workflow: WorkflowDB) -> dict:
     """Convert WorkflowDB to Pydantic-compatible dict"""
-    from ..models import Position, Rect
+    from .models import Position, Rect
     
     nodes = []
     for node in db_workflow.nodes:

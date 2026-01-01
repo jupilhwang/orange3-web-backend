@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 from fastapi import Header, HTTPException
 import uuid
 
-from ..models import Tenant
+from .models import Tenant
 
 
 class TenantManager:
