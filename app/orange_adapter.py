@@ -720,40 +720,62 @@ PARENT_CLASS_PORTS = {
     },
 }
 
-# Mapping from class name patterns to parent class for inheritance resolution
+# Static mapping from class name patterns to parent class for inheritance resolution
+# This is a fallback when dynamic resolution fails
 CLASS_INHERITANCE_MAP = {
-    # Learner widgets
-    "OWKNN": "OWBaseLearner",
-    "OWTreeLearner": "OWBaseLearner",
-    "OWNaiveBayes": "OWBaseLearner",
-    "OWLogisticRegression": "OWBaseLearner",
-    "OWRandomForest": "OWBaseLearner",
-    "OWLinearRegression": "OWBaseLearner",
-    "OWSVM": "OWBaseLearner",
-    "OWNeuralNetwork": "OWBaseLearner",
-    "OWGradientBoosting": "OWBaseLearner",
-    "OWAdaBoost": "OWBaseLearner",
-    "OWSGD": "OWBaseLearner",
-    "OWCurveFit": "OWBaseLearner",
-    "OWPLS": "OWBaseLearner",
-    "OWConstant": "OWBaseLearner",
-    "OWScoringSheet": "OWBaseLearner",
-    "OWCN2RuleInduction": "OWBaseLearner",
-    # Projection widgets
-    "OWScatterPlot": "OWDataProjectionWidget",
-    "OWTSNE": "OWDataProjectionWidget",
-    "OWMDS": "OWDataProjectionWidget",
-    "OWRadviz": "OWAnchorProjectionWidget",
-    "OWFreeViz": "OWAnchorProjectionWidget",
-    "OWLinearProjection": "OWAnchorProjectionWidget",
-    # Text widgets (OWT prefix for Orange3-Text widgets)
-    "OWTBagOfWords": "OWBaseVectorizer",
-    "OWBagOfWords": "OWBaseVectorizer",
-    "OWSimilarityHashing": "OWBaseVectorizer",
-    "OWDocumentEmbedding": "OWBaseVectorizer",
-    "OWPreprocess": "OWTextBaseWidget",
-    "OWCorpusViewer": "OWTextBaseWidget",
+    # Add explicit mappings only for special cases
+    # Most widgets are auto-detected via dynamic class inspection
 }
+
+# Dynamic class inheritance cache (populated at runtime)
+_DYNAMIC_INHERITANCE_CACHE: Dict[str, List[str]] = {}
+
+
+def _get_dynamic_inheritance(class_name: str) -> List[str]:
+    """Get inheritance chain for a widget class by importing it at runtime.
+    
+    Returns list of parent class names that exist in PARENT_CLASS_PORTS.
+    """
+    if class_name in _DYNAMIC_INHERITANCE_CACHE:
+        return _DYNAMIC_INHERITANCE_CACHE[class_name]
+    
+    result = []
+    
+    # Try to import the widget class and inspect its MRO
+    try:
+        # Try Orange3 core widgets
+        import importlib
+        
+        # Common Orange3 widget module patterns
+        module_patterns = [
+            f"Orange.widgets.model.ow{class_name[2:].lower()}",
+            f"Orange.widgets.data.ow{class_name[2:].lower()}",
+            f"Orange.widgets.visualize.ow{class_name[2:].lower()}",
+            f"Orange.widgets.evaluate.ow{class_name[2:].lower()}",
+            f"Orange.widgets.unsupervised.ow{class_name[2:].lower()}",
+        ]
+        
+        widget_class = None
+        for pattern in module_patterns:
+            try:
+                module = importlib.import_module(pattern)
+                if hasattr(module, class_name):
+                    widget_class = getattr(module, class_name)
+                    break
+            except (ImportError, ModuleNotFoundError):
+                continue
+        
+        if widget_class:
+            # Get MRO and find matching parent classes
+            for parent in widget_class.__mro__:
+                parent_name = parent.__name__
+                if parent_name in PARENT_CLASS_PORTS:
+                    result.append(parent_name)
+    except Exception:
+        pass
+    
+    _DYNAMIC_INHERITANCE_CACHE[class_name] = result
+    return result
 
 
 class WidgetDiscovery:
@@ -947,40 +969,103 @@ class WidgetDiscovery:
         return parents
     
     def _apply_inherited_ports(self, info: Dict):
-        """Apply inherited ports from parent classes."""
+        """Apply inherited ports from parent classes.
+        
+        Automatically resolves parent class ports by:
+        1. Checking CLASS_INHERITANCE_MAP for explicit mappings
+        2. Directly matching parent class names in PARENT_CLASS_PORTS
+        3. Recursively checking parent class hierarchy
+        """
         class_name = info.get('class_name', '')
         parent_classes = info.get('parent_classes', [])
         
-        # First, check if the class itself is in the inheritance map
-        resolved_parent = CLASS_INHERITANCE_MAP.get(class_name)
+        # Find all matching parent port definitions
+        resolved_parents = self._resolve_parent_ports(class_name, parent_classes)
         
-        # If not found, check parent classes
-        if not resolved_parent:
-            for parent in parent_classes:
-                if parent in PARENT_CLASS_PORTS:
-                    resolved_parent = parent
-                    break
-                # Check if parent is in the inheritance map
-                if parent in CLASS_INHERITANCE_MAP:
-                    resolved_parent = CLASS_INHERITANCE_MAP[parent]
-                    break
+        if not resolved_parents:
+            return
         
-        if resolved_parent and resolved_parent in PARENT_CLASS_PORTS:
-            parent_ports = PARENT_CLASS_PORTS[resolved_parent]
+        # Merge all inherited ports (earlier in list = higher priority)
+        all_inherited_inputs = []
+        all_inherited_outputs = []
+        seen_input_ids = set()
+        seen_output_ids = set()
+        
+        for parent_name in resolved_parents:
+            parent_ports = PARENT_CLASS_PORTS.get(parent_name, {})
+            for inp in parent_ports.get('inputs', []):
+                if inp['id'] not in seen_input_ids:
+                    all_inherited_inputs.append(inp.copy())
+                    seen_input_ids.add(inp['id'])
+            for out in parent_ports.get('outputs', []):
+                if out['id'] not in seen_output_ids:
+                    all_inherited_outputs.append(out.copy())
+                    seen_output_ids.add(out['id'])
+        
+        # Merge with widget's own ports (inherited first, then own)
+        existing_input_ids = {p['id'] for p in info['inputs']}
+        merged_inputs = [p for p in all_inherited_inputs if p['id'] not in existing_input_ids]
+        merged_inputs.extend(info['inputs'])
+        info['inputs'] = merged_inputs
+        
+        existing_output_ids = {p['id'] for p in info['outputs']}
+        merged_outputs = [p for p in all_inherited_outputs if p['id'] not in existing_output_ids]
+        merged_outputs.extend(info['outputs'])
+        info['outputs'] = merged_outputs
+    
+    def _resolve_parent_ports(self, class_name: str, parent_classes: List[str]) -> List[str]:
+        """Resolve parent class names that have port definitions.
+        
+        Uses multiple strategies:
+        1. Dynamic class inspection (imports actual class and checks MRO)
+        2. Explicit CLASS_INHERITANCE_MAP
+        3. Direct parent class matching in PARENT_CLASS_PORTS
+        4. Pattern matching on parent class names
+        
+        Returns a list of parent class names that exist in PARENT_CLASS_PORTS,
+        in order of inheritance priority.
+        """
+        resolved = []
+        checked = set()
+        
+        # Try dynamic inheritance first (most accurate)
+        dynamic_parents = _get_dynamic_inheritance(class_name)
+        if dynamic_parents:
+            resolved.extend(dynamic_parents)
+            return resolved
+        
+        def check_class(name: str):
+            if name in checked:
+                return
+            checked.add(name)
             
-            # Merge inherited inputs (parent first, then child's own)
-            inherited_inputs = parent_ports.get('inputs', [])
-            existing_input_ids = {p['id'] for p in info['inputs']}
-            merged_inputs = [p.copy() for p in inherited_inputs if p['id'] not in existing_input_ids]
-            merged_inputs.extend(info['inputs'])
-            info['inputs'] = merged_inputs
+            # Check explicit mapping first
+            if name in CLASS_INHERITANCE_MAP:
+                mapped = CLASS_INHERITANCE_MAP[name]
+                if mapped in PARENT_CLASS_PORTS and mapped not in resolved:
+                    resolved.append(mapped)
+                check_class(mapped)
+                return
             
-            # Merge inherited outputs (parent first, then child's own)
-            inherited_outputs = parent_ports.get('outputs', [])
-            existing_output_ids = {p['id'] for p in info['outputs']}
-            merged_outputs = [p.copy() for p in inherited_outputs if p['id'] not in existing_output_ids]
-            merged_outputs.extend(info['outputs'])
-            info['outputs'] = merged_outputs
+            # Check if directly in PARENT_CLASS_PORTS
+            if name in PARENT_CLASS_PORTS and name not in resolved:
+                resolved.append(name)
+        
+        # Check the widget class itself
+        check_class(class_name)
+        
+        # Check all parent classes from AST
+        for parent in parent_classes:
+            check_class(parent)
+            
+            # Pattern matching: find matching parent in PARENT_CLASS_PORTS
+            for known_parent in PARENT_CLASS_PORTS.keys():
+                # Match patterns like "BaseLearner" in "OWBaseLearner"
+                base_name = known_parent.replace('OW', '')
+                if base_name in parent and known_parent not in resolved:
+                    resolved.append(known_parent)
+        
+        return resolved
     
     def _is_widget_class(self, node: ast.ClassDef) -> bool:
         """Check if a class is a widget class."""
