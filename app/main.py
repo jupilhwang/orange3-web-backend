@@ -377,6 +377,34 @@ async def get_logs(limit: int = 100):
     }
 
 
+@app.get("/internal/resources")
+async def get_resources():
+    """Get current resource usage (CPU, Memory, Disk, Throughput)."""
+    if OTEL_AVAILABLE and get_telemetry:
+        telemetry = get_telemetry()
+        if telemetry:
+            return telemetry.get_resource_usage()
+    
+    # Fallback without OpenTelemetry
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        return {
+            "psutil_available": True,
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": memory.percent,
+            "memory_used_mb": int(memory.used / (1024 * 1024)),
+            "disk_percent": disk.percent,
+            "disk_used_gb": round(disk.used / (1024 * 1024 * 1024), 2),
+        }
+    except ImportError:
+        return {
+            "psutil_available": False,
+            "message": "psutil not installed. Run: pip install psutil"
+        }
+
+
 @app.get("/health/ready")
 async def readiness_check(db: AsyncSession = Depends(get_db)):
     """Readiness probe - checks database connection."""
