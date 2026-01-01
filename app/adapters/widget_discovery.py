@@ -163,6 +163,11 @@ CATEGORY_PRIORITIES = {
 class WidgetDiscovery:
     """Discovers Orange3 widgets from the filesystem using AST parsing."""
     
+    # 위젯 이름 오버라이드 (Orange3 원래 이름 -> 표시 이름)
+    WIDGET_NAME_OVERRIDES = {
+        "Column Statistics": "Feature Statistics",
+    }
+    
     def __init__(self, orange3_path: Optional[str] = None, orange3_text_path: Optional[str] = None):
         """
         Initialize the widget discovery.
@@ -175,6 +180,10 @@ class WidgetDiscovery:
         self.orange3_text_path = orange3_text_path or self._find_orange3_text_path()
         self.categories: Dict[str, Dict] = {}
         self.widgets: List[Dict] = []
+    
+    def _get_display_name(self, original_name: str) -> str:
+        """Get display name for widget (apply override if exists)."""
+        return self.WIDGET_NAME_OVERRIDES.get(original_name, original_name)
         
     def _find_orange3_path(self) -> Optional[str]:
         """Try to find Orange3 installation path."""
@@ -335,9 +344,12 @@ class WidgetDiscovery:
                     inputs = self._sort_ports_by_priority(widget_info.get('inputs', []))
                     outputs = self._sort_ports_by_priority(widget_info.get('outputs', []))
                     
+                    # 위젯 이름 오버라이드 적용
+                    display_name = self._get_display_name(widget_info['name'])
+                    
                     widget_data = {
                         'id': self._generate_widget_id(widget_info['name']),
-                        'name': widget_info['name'],
+                        'name': display_name,
                         'description': widget_info.get('description', ''),
                         'icon': icon,
                         'category': widget_category,

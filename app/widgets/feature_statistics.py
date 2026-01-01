@@ -17,7 +17,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 import numpy as np
 
-router = APIRouter(prefix="/api/v1/data/feature-statistics", tags=["Feature Statistics"])
+router = APIRouter(prefix="/data/feature-statistics", tags=["Feature Statistics"])
 
 
 class FeatureStatisticsRequest(BaseModel):
@@ -121,6 +121,36 @@ def _compute_dispersion(x: np.ndarray, var_type: str) -> Optional[float]:
     return None
 
 
+def _get_palette_colors(color_var, count: int) -> Optional[list]:
+    """QColor palette에서 hex 색상 추출"""
+    if not hasattr(color_var, 'palette') or color_var.palette is None:
+        return None
+    
+    colors = []
+    try:
+        palette = color_var.palette
+        for i in range(min(count, len(palette))):
+            c = palette[i]
+            # QColor 객체인 경우 RGB 값 추출
+            if hasattr(c, 'red') and hasattr(c, 'green') and hasattr(c, 'blue'):
+                # QColor
+                colors.append(f'#{c.red():02x}{c.green():02x}{c.blue():02x}')
+            elif hasattr(c, '__iter__') and len(c) >= 3:
+                # tuple/list (r, g, b)
+                colors.append(f'#{int(c[0]):02x}{int(c[1]):02x}{int(c[2]):02x}')
+            elif isinstance(c, int):
+                # integer color
+                colors.append(f'#{c:06x}')
+            else:
+                # 기본 색상
+                default_colors = ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']
+                colors.append(default_colors[i % len(default_colors)])
+    except Exception:
+        return None
+    
+    return colors if colors else None
+
+
 def _compute_distribution(x: np.ndarray, var, var_type: str, color_data=None, color_var=None) -> Optional[dict]:
     """분포 히스토그램 데이터 계산"""
     from Orange.data import DiscreteVariable
@@ -147,7 +177,7 @@ def _compute_distribution(x: np.ndarray, var, var_type: str, color_data=None, co
                 'type': 'bar',
                 'labels': list(var.values),
                 'stacked': stacked,
-                'colors': [f'#{c:06x}' for c in color_var.palette[:len(color_var.values)]] if hasattr(color_var, 'palette') else None
+                'colors': _get_palette_colors(color_var, len(color_var.values))
             }
         
         return {
@@ -172,7 +202,7 @@ def _compute_distribution(x: np.ndarray, var, var_type: str, color_data=None, co
                     'type': 'histogram',
                     'bins': bin_edges.tolist(),
                     'stacked': stacked,
-                    'colors': [f'#{c:06x}' for c in color_var.palette[:len(color_var.values)]] if hasattr(color_var, 'palette') else None
+                    'colors': _get_palette_colors(color_var, len(color_var.values))
                 }
             
             return {

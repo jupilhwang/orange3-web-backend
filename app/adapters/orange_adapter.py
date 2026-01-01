@@ -249,6 +249,11 @@ class OrangeRegistryAdapter:
             {"name": "Unsupervised", "background": "#8E7CC3", "priority": 5},
         ]
     
+    # 위젯 이름 매핑 (Orange3 원래 이름 -> 표시 이름)
+    WIDGET_NAME_OVERRIDES = {
+        "Column Statistics": "Feature Statistics",
+    }
+    
     def _widget_to_dict(self, widget: 'WidgetDescription') -> Dict:
         """Convert WidgetDescription to dict."""
         inputs = []
@@ -271,9 +276,12 @@ class OrangeRegistryAdapter:
                 "dynamic": getattr(out, 'dynamic', False)
             })
         
+        # 위젯 이름 오버라이드 적용
+        display_name = self.WIDGET_NAME_OVERRIDES.get(widget.name, widget.name)
+        
         return {
             "id": widget.qualified_name,
-            "name": widget.name,
+            "name": display_name,
             "description": widget.description or "",
             "icon": widget.icon or "",
             "category": widget.category or "",
