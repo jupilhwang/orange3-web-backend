@@ -100,8 +100,22 @@ async def upload_file(
     - filesystem: uploads/{tenant_id}/{uuid}_{filename}
     - database: stored in file_storage table
     """
-    # Validate file extension
-    allowed_extensions = {'.csv', '.tsv', '.tab', '.xlsx', '.xls', '.pkl', '.pickle', '.txt'}
+    # Validate file extension (Orange3 compatible formats)
+    allowed_extensions = {
+        '.csv',      # Comma-separated values
+        '.tsv',      # Tab-separated values
+        '.tab',      # Tab-separated values (Orange3 native)
+        '.xlsx',     # Excel 2007+
+        '.xls',      # Excel 97-2003
+        '.pkl',      # Pickle
+        '.pickle',   # Pickle
+        '.txt',      # Text files
+        '.dat',      # Data files
+        '.data',     # Data files
+        '.arff',     # Weka ARFF format
+        '.basket',   # Basket format
+        '.sparse',   # Sparse format
+    }
     file_ext = Path(file.filename).suffix.lower()
     
     if file_ext not in allowed_extensions:
@@ -124,6 +138,11 @@ async def upload_file(
             '.pkl': 'application/octet-stream',
             '.pickle': 'application/octet-stream',
             '.txt': 'text/plain',
+            '.dat': 'text/plain',
+            '.data': 'text/plain',
+            '.arff': 'text/plain',
+            '.basket': 'text/plain',
+            '.sparse': 'text/plain',
         }
         content_type = content_type_map.get(file_ext, 'application/octet-stream')
         
