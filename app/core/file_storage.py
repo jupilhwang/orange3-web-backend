@@ -1,12 +1,17 @@
 """
 File Storage Module.
 
-Provides a unified interface for file storage with support for:
-- Filesystem storage (default, for single server)
-- Database storage (for multi-server without shared filesystem)
+Provides a unified interface for file storage with support for multiple backends:
+
+Supported storage types:
+- 'sqlite': SQLite database (default, embedded)
+- 'mysql': MySQL/MariaDB database (planned)
+- 'postgresql': PostgreSQL database (planned)
+- 'oracle': Oracle database (planned)
+- 'filesystem' or 'local': Local filesystem
 
 Configuration (priority: config file > env var > default):
-    storage.type: 'filesystem' (default) or 'database'
+    storage.type: 'sqlite' (default), 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
     storage.max_db_file_size: Maximum file size for DB storage (default: 50MB)
 """
 
@@ -409,20 +414,33 @@ def get_storage() -> StorageBackend:
     """
     Get the configured storage backend.
     
-    Uses STORAGE_TYPE environment variable:
-    - 'filesystem': FilesystemStorage (default)
-    - 'database': DatabaseStorage
+    Supported storage types:
+    - 'sqlite': SQLite database (default)
+    - 'mysql': MySQL/MariaDB database (uses same DatabaseStorage)
+    - 'postgresql': PostgreSQL database (uses same DatabaseStorage)
+    - 'oracle': Oracle database (uses same DatabaseStorage)
+    - 'filesystem' or 'local': Local filesystem
     """
     global _storage
     
     if _storage is None:
-        if STORAGE_TYPE == 'database':
+        # Database storage types
+        db_storage_types = {'sqlite', 'mysql', 'postgresql', 'oracle', 'database'}
+        # Filesystem storage types
+        fs_storage_types = {'filesystem', 'local'}
+        
+        if STORAGE_TYPE in db_storage_types:
             from .database import async_session_maker
             _storage = DatabaseStorage(async_session_maker)
-            logger.info("Using database storage backend")
-        else:
+            logger.info(f"Using database storage backend (type: {STORAGE_TYPE})")
+        elif STORAGE_TYPE in fs_storage_types:
             _storage = FilesystemStorage()
             logger.info("Using filesystem storage backend")
+        else:
+            # Default to SQLite if unknown type
+            from .database import async_session_maker
+            _storage = DatabaseStorage(async_session_maker)
+            logger.warning(f"Unknown storage type '{STORAGE_TYPE}', defaulting to sqlite")
     
     return _storage
 

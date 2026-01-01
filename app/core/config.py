@@ -143,8 +143,17 @@ class PathConfig:
 
 @dataclass
 class StorageConfig:
-    """Storage configuration."""
-    type: str = "database"  # 'filesystem' or 'database'
+    """
+    Storage configuration.
+    
+    Supported storage types:
+    - 'sqlite': SQLite database (default, embedded)
+    - 'mysql': MySQL/MariaDB database
+    - 'postgresql': PostgreSQL database
+    - 'oracle': Oracle database
+    - 'filesystem' or 'local': Local filesystem
+    """
+    type: str = "sqlite"  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
     max_db_file_size: int = 50 * 1024 * 1024  # 50MB
 
 
@@ -314,7 +323,7 @@ class ConfigManager:
                 database=self.get("path.database", None),
             ),
             storage=StorageConfig(
-                type=self.get("storage.type", "database"),
+                type=self.get("storage.type", "sqlite"),
                 max_db_file_size=self.get("storage.max_db_file_size", 50 * 1024 * 1024, int),
             ),
             log=LogConfig(

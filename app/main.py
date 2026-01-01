@@ -323,10 +323,13 @@ async def health_check():
     """Health check endpoint."""
     availability = get_availability()
     config = get_config()
-    storage_type = config.storage.type  # 'database' or 'filesystem'
+    storage_type = config.storage.type  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
+    
+    # Database storage types
+    db_storage_types = {'sqlite', 'mysql', 'postgresql', 'oracle', 'database'}
     
     # Storage path depends on storage type
-    if storage_type == "database":
+    if storage_type in db_storage_types:
         storage_path = config.database.url or "sqlite:///./orange3.db"
     else:
         storage_path = str(get_upload_dir())
