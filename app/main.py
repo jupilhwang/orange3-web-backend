@@ -322,12 +322,15 @@ api_v1 = APIRouter(prefix="/api/v1")
 async def health_check():
     """Health check endpoint."""
     availability = get_availability()
+    upload_dir = get_upload_dir()
     return {
         "status": "healthy",
         "service": "orange3-web",
         "version": SERVER_VERSION,
         "orange3": availability.get("orange3", False),
         "database": "sqlite",
+        "storage_type": "local",
+        "storage_path": str(upload_dir),
         "locks": "asyncio",
         "server_start_time": SERVER_START_TIME
     }
