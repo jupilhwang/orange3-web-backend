@@ -643,6 +643,316 @@ CATEGORY_PRIORITIES = {
     "Text Mining": 7,
 }
 
+# Fallback port definitions for widgets that inherit from parent classes
+# These are used when AST parsing cannot detect inherited ports
+WIDGET_PORT_FALLBACKS = {
+    # Visualization widgets (inherit from OWDataProjectionWidget)
+    "scatter-plot": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"},
+            {"id": "features", "name": "Features", "type": "AttributeList"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
+            {"id": "features", "name": "Features", "type": "AttributeList"}
+        ]
+    },
+    "linear-projection": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
+            {"id": "components", "name": "Components", "type": "Data"}
+        ]
+    },
+    "radviz": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
+            {"id": "components", "name": "Components", "type": "Data"}
+        ]
+    },
+    "freeviz": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
+        ]
+    },
+    "t-sne": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
+        ]
+    },
+    "mds": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "distances", "name": "Distances", "type": "DistMatrix"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
+        ]
+    },
+    # Model widgets (inherit from OWBaseLearner)
+    "knn": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "tree": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "naive-bayes": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "logistic-regression": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"},
+            {"id": "coefficients", "name": "Coefficients", "type": "Data"}
+        ]
+    },
+    "random-forest": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "linear-regression": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"},
+            {"id": "coefficients", "name": "Coefficients", "type": "Data"}
+        ]
+    },
+    "svm": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"},
+            {"id": "support_vectors", "name": "Support Vectors", "type": "Data"}
+        ]
+    },
+    "neural-network": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "gradient-boosting": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "adaboost": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"},
+            {"id": "base_learner", "name": "Base Learner", "type": "Learner"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "stochastic-gradient-descent": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "cn2-rule-induction": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "constant": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "calibrated-learner": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "base_learner", "name": "Base Learner", "type": "Learner"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "stacking": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "learners", "name": "Learners", "type": "Learner", "multiple": True},
+            {"id": "aggregate", "name": "Aggregate", "type": "Learner"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "scoring-sheet": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    # Text Mining widgets
+    "bag-of-words": {
+        "inputs": [
+            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
+        ],
+        "outputs": [
+            {"id": "bow", "name": "Bag of Words", "type": "Data"}
+        ]
+    },
+    "similarity-hashing": {
+        "inputs": [
+            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
+        ],
+        "outputs": [
+            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
+        ]
+    },
+    # Multi-input widgets
+    "venn-diagram": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data", "multiple": True}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
+        ]
+    },
+    "python-script": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data", "multiple": True},
+            {"id": "learner", "name": "Learner", "type": "Learner", "multiple": True},
+            {"id": "classifier", "name": "Classifier", "type": "Model", "multiple": True},
+            {"id": "object", "name": "Object", "type": "Object", "multiple": True}
+        ],
+        "outputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "classifier", "name": "Classifier", "type": "Model"},
+            {"id": "object", "name": "Object", "type": "Object"}
+        ]
+    },
+    # PLS widget
+    "pls": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"},
+            {"id": "components", "name": "Components", "type": "Data"}
+        ]
+    },
+    # Curve Fit widget
+    "curve-fit": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    # Document Embedding widget
+    "document-embedding": {
+        "inputs": [
+            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
+        ],
+        "outputs": [
+            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
+        ]
+    },
+}
+
 
 class WidgetDiscovery:
     """Discovers Orange3 widgets from the filesystem using AST parsing."""
@@ -734,16 +1044,29 @@ class WidgetDiscovery:
                         icon = icon_prefix + icon.replace('icons/', '')
                     
                     display_name = self.WIDGET_NAME_OVERRIDES.get(widget_info['name'], widget_info['name'])
+                    widget_id = self._generate_widget_id(widget_info['name'])
+                    
+                    # Get inputs/outputs from parsing, fallback to predefined if empty
+                    parsed_inputs = widget_info.get('inputs', [])
+                    parsed_outputs = widget_info.get('outputs', [])
+                    
+                    # Apply fallback if parsed ports are empty or incomplete
+                    if widget_id in WIDGET_PORT_FALLBACKS:
+                        fallback = WIDGET_PORT_FALLBACKS[widget_id]
+                        if not parsed_inputs or len(parsed_inputs) < len(fallback.get('inputs', [])):
+                            parsed_inputs = fallback.get('inputs', parsed_inputs)
+                        if not parsed_outputs or len(parsed_outputs) < len(fallback.get('outputs', [])):
+                            parsed_outputs = fallback.get('outputs', parsed_outputs)
                     
                     widget_data = {
-                        'id': self._generate_widget_id(widget_info['name']),
+                        'id': widget_id,
                         'name': display_name,
                         'description': widget_info.get('description', ''),
                         'icon': icon,
                         'category': widget_category,
                         'priority': widget_info.get('priority', 9999),
-                        'inputs': widget_info.get('inputs', []),
-                        'outputs': widget_info.get('outputs', []),
+                        'inputs': parsed_inputs,
+                        'outputs': parsed_outputs,
                         'keywords': widget_info.get('keywords', []),
                         'source': 'orange3-text' if icon_prefix else 'orange3',
                     }
