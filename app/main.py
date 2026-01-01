@@ -321,6 +321,7 @@ api_v1 = APIRouter(prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
+    import time
     availability = get_availability()
     config = get_config()
     storage_type = config.storage.type  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
@@ -334,17 +335,20 @@ async def health_check():
     else:
         storage_path = str(get_upload_dir())
     
+    # Calculate uptime
+    uptime_seconds = time.time() - SERVER_START_TIME
+    
     return {
         "status": "healthy",
-        "service": "orange3-web",
+        "service": "orange3-web-backend",
         "version": SERVER_VERSION,
-        "orange3": availability.get("orange3", False),
-        "database": "sqlite",
+        "uptime_seconds": round(uptime_seconds, 2),
+        "orange3_available": availability.get("orange3", False),
+        "database_type": "sqlite",
         "storage_type": storage_type,
         "storage_path": storage_path,
         "max_file_size_mb": config.storage.max_db_file_size // (1024 * 1024),
-        "locks": "asyncio",
-        "server_start_time": SERVER_START_TIME
+        "lock_type": "asyncio",
     }
 
 
