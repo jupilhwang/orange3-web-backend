@@ -643,23 +643,53 @@ CATEGORY_PRIORITIES = {
     "Text Mining": 7,
 }
 
-# Fallback port definitions for widgets that inherit from parent classes
-# These are used when AST parsing cannot detect inherited ports
-WIDGET_PORT_FALLBACKS = {
-    # Visualization widgets (inherit from OWDataProjectionWidget)
-    "scatter-plot": {
+# Parent class port definitions - automatically inherited by child widgets
+# Orange3 widgets inherit Inputs/Outputs from parent classes
+PARENT_CLASS_PORTS = {
+    # Base learner widgets (OWBaseLearner, OWProvidesLearner)
+    "OWBaseLearner": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"},
-            {"id": "features", "name": "Features", "type": "AttributeList"}
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    "OWProvidesLearner": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+        ],
+        "outputs": [
+            {"id": "learner", "name": "Learner", "type": "Learner"},
+            {"id": "model", "name": "Model", "type": "Model"}
+        ]
+    },
+    # Data projection widgets (Scatter Plot, t-SNE, MDS, etc.)
+    "OWDataProjectionWidget": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
         ],
         "outputs": [
             {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
-            {"id": "features", "name": "Features", "type": "AttributeList"}
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
         ]
     },
-    "linear-projection": {
+    "OWProjectionWidgetBase": {
+        "inputs": [
+            {"id": "data", "name": "Data", "type": "Data"},
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+        ],
+        "outputs": [
+            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
+        ]
+    },
+    # Anchor projection widgets (Radviz, FreeViz, Linear Projection)
+    "OWAnchorProjectionWidget": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
             {"id": "data_subset", "name": "Data Subset", "type": "Data"}
@@ -670,224 +700,8 @@ WIDGET_PORT_FALLBACKS = {
             {"id": "components", "name": "Components", "type": "Data"}
         ]
     },
-    "radviz": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
-        ],
-        "outputs": [
-            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
-            {"id": "components", "name": "Components", "type": "Data"}
-        ]
-    },
-    "freeviz": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
-        ],
-        "outputs": [
-            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
-    },
-    "t-sne": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
-        ],
-        "outputs": [
-            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
-    },
-    "mds": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "distances", "name": "Distances", "type": "DistMatrix"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
-        ],
-        "outputs": [
-            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
-    },
-    # Model widgets (inherit from OWBaseLearner)
-    "knn": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "tree": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "naive-bayes": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "logistic-regression": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"},
-            {"id": "coefficients", "name": "Coefficients", "type": "Data"}
-        ]
-    },
-    "random-forest": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "linear-regression": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"},
-            {"id": "coefficients", "name": "Coefficients", "type": "Data"}
-        ]
-    },
-    "svm": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"},
-            {"id": "support_vectors", "name": "Support Vectors", "type": "Data"}
-        ]
-    },
-    "neural-network": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "gradient-boosting": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "adaboost": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"},
-            {"id": "base_learner", "name": "Base Learner", "type": "Learner"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "stochastic-gradient-descent": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "cn2-rule-induction": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "constant": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "calibrated-learner": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "base_learner", "name": "Base Learner", "type": "Learner"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "stacking": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "learners", "name": "Learners", "type": "Learner", "multiple": True},
-            {"id": "aggregate", "name": "Aggregate", "type": "Learner"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    "scoring-sheet": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    # Text Mining widgets
-    "bag-of-words": {
-        "inputs": [
-            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
-        ],
-        "outputs": [
-            {"id": "bow", "name": "Bag of Words", "type": "Data"}
-        ]
-    },
-    "similarity-hashing": {
+    # Text corpus widgets
+    "OWTextBaseWidget": {
         "inputs": [
             {"id": "corpus", "name": "Corpus", "type": "Corpus"}
         ],
@@ -895,55 +709,8 @@ WIDGET_PORT_FALLBACKS = {
             {"id": "corpus", "name": "Corpus", "type": "Corpus"}
         ]
     },
-    # Multi-input widgets
-    "venn-diagram": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data", "multiple": True}
-        ],
-        "outputs": [
-            {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
-    },
-    "python-script": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data", "multiple": True},
-            {"id": "learner", "name": "Learner", "type": "Learner", "multiple": True},
-            {"id": "classifier", "name": "Classifier", "type": "Model", "multiple": True},
-            {"id": "object", "name": "Object", "type": "Object", "multiple": True}
-        ],
-        "outputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "classifier", "name": "Classifier", "type": "Model"},
-            {"id": "object", "name": "Object", "type": "Object"}
-        ]
-    },
-    # PLS widget
-    "pls": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"},
-            {"id": "components", "name": "Components", "type": "Data"}
-        ]
-    },
-    # Curve Fit widget
-    "curve-fit": {
-        "inputs": [
-            {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
-        ],
-        "outputs": [
-            {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
-    },
-    # Document Embedding widget
-    "document-embedding": {
+    # Text vectorizer widgets (Bag of Words, etc.)
+    "OWBaseVectorizer": {
         "inputs": [
             {"id": "corpus", "name": "Corpus", "type": "Corpus"}
         ],
@@ -951,6 +718,41 @@ WIDGET_PORT_FALLBACKS = {
             {"id": "corpus", "name": "Corpus", "type": "Corpus"}
         ]
     },
+}
+
+# Mapping from class name patterns to parent class for inheritance resolution
+CLASS_INHERITANCE_MAP = {
+    # Learner widgets
+    "OWKNN": "OWBaseLearner",
+    "OWTreeLearner": "OWBaseLearner",
+    "OWNaiveBayes": "OWBaseLearner",
+    "OWLogisticRegression": "OWBaseLearner",
+    "OWRandomForest": "OWBaseLearner",
+    "OWLinearRegression": "OWBaseLearner",
+    "OWSVM": "OWBaseLearner",
+    "OWNeuralNetwork": "OWBaseLearner",
+    "OWGradientBoosting": "OWBaseLearner",
+    "OWAdaBoost": "OWBaseLearner",
+    "OWSGD": "OWBaseLearner",
+    "OWCurveFit": "OWBaseLearner",
+    "OWPLS": "OWBaseLearner",
+    "OWConstant": "OWBaseLearner",
+    "OWScoringSheet": "OWBaseLearner",
+    "OWCN2RuleInduction": "OWBaseLearner",
+    # Projection widgets
+    "OWScatterPlot": "OWDataProjectionWidget",
+    "OWTSNE": "OWDataProjectionWidget",
+    "OWMDS": "OWDataProjectionWidget",
+    "OWRadviz": "OWAnchorProjectionWidget",
+    "OWFreeViz": "OWAnchorProjectionWidget",
+    "OWLinearProjection": "OWAnchorProjectionWidget",
+    # Text widgets (OWT prefix for Orange3-Text widgets)
+    "OWTBagOfWords": "OWBaseVectorizer",
+    "OWBagOfWords": "OWBaseVectorizer",
+    "OWSimilarityHashing": "OWBaseVectorizer",
+    "OWDocumentEmbedding": "OWBaseVectorizer",
+    "OWPreprocess": "OWTextBaseWidget",
+    "OWCorpusViewer": "OWTextBaseWidget",
 }
 
 
@@ -1046,18 +848,7 @@ class WidgetDiscovery:
                     display_name = self.WIDGET_NAME_OVERRIDES.get(widget_info['name'], widget_info['name'])
                     widget_id = self._generate_widget_id(widget_info['name'])
                     
-                    # Get inputs/outputs from parsing, fallback to predefined if empty
-                    parsed_inputs = widget_info.get('inputs', [])
-                    parsed_outputs = widget_info.get('outputs', [])
-                    
-                    # Apply fallback if parsed ports are empty or incomplete
-                    if widget_id in WIDGET_PORT_FALLBACKS:
-                        fallback = WIDGET_PORT_FALLBACKS[widget_id]
-                        if not parsed_inputs or len(parsed_inputs) < len(fallback.get('inputs', [])):
-                            parsed_inputs = fallback.get('inputs', parsed_inputs)
-                        if not parsed_outputs or len(parsed_outputs) < len(fallback.get('outputs', [])):
-                            parsed_outputs = fallback.get('outputs', parsed_outputs)
-                    
+                    # Ports are already merged with inherited ports in _extract_widget_info
                     widget_data = {
                         'id': widget_id,
                         'name': display_name,
@@ -1065,8 +856,8 @@ class WidgetDiscovery:
                         'icon': icon,
                         'category': widget_category,
                         'priority': widget_info.get('priority', 9999),
-                        'inputs': parsed_inputs,
-                        'outputs': parsed_outputs,
+                        'inputs': widget_info.get('inputs', []),
+                        'outputs': widget_info.get('outputs', []),
                         'keywords': widget_info.get('keywords', []),
                         'source': 'orange3-text' if icon_prefix else 'orange3',
                     }
@@ -1117,10 +908,16 @@ class WidgetDiscovery:
                 'inputs': [],
                 'outputs': [],
                 'keywords': [],
+                'class_name': None,
+                'parent_classes': [],
             }
             
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef) and self._is_widget_class(node):
+                    # Extract class name and parent classes
+                    info['class_name'] = node.name
+                    info['parent_classes'] = self._extract_parent_classes(node)
+                    
                     for item in node.body:
                         if isinstance(item, ast.Assign):
                             self._extract_assign(item, info)
@@ -1131,11 +928,59 @@ class WidgetDiscovery:
                                 info['outputs'] = self._extract_io_class(item)
                     
                     if info['name']:
+                        # Apply inherited ports from parent classes
+                        self._apply_inherited_ports(info)
                         return info
             
             return None
         except Exception:
             return None
+    
+    def _extract_parent_classes(self, node: ast.ClassDef) -> List[str]:
+        """Extract parent class names from a class definition."""
+        parents = []
+        for base in node.bases:
+            if isinstance(base, ast.Name):
+                parents.append(base.id)
+            elif isinstance(base, ast.Attribute):
+                parents.append(base.attr)
+        return parents
+    
+    def _apply_inherited_ports(self, info: Dict):
+        """Apply inherited ports from parent classes."""
+        class_name = info.get('class_name', '')
+        parent_classes = info.get('parent_classes', [])
+        
+        # First, check if the class itself is in the inheritance map
+        resolved_parent = CLASS_INHERITANCE_MAP.get(class_name)
+        
+        # If not found, check parent classes
+        if not resolved_parent:
+            for parent in parent_classes:
+                if parent in PARENT_CLASS_PORTS:
+                    resolved_parent = parent
+                    break
+                # Check if parent is in the inheritance map
+                if parent in CLASS_INHERITANCE_MAP:
+                    resolved_parent = CLASS_INHERITANCE_MAP[parent]
+                    break
+        
+        if resolved_parent and resolved_parent in PARENT_CLASS_PORTS:
+            parent_ports = PARENT_CLASS_PORTS[resolved_parent]
+            
+            # Merge inherited inputs (parent first, then child's own)
+            inherited_inputs = parent_ports.get('inputs', [])
+            existing_input_ids = {p['id'] for p in info['inputs']}
+            merged_inputs = [p.copy() for p in inherited_inputs if p['id'] not in existing_input_ids]
+            merged_inputs.extend(info['inputs'])
+            info['inputs'] = merged_inputs
+            
+            # Merge inherited outputs (parent first, then child's own)
+            inherited_outputs = parent_ports.get('outputs', [])
+            existing_output_ids = {p['id'] for p in info['outputs']}
+            merged_outputs = [p.copy() for p in inherited_outputs if p['id'] not in existing_output_ids]
+            merged_outputs.extend(info['outputs'])
+            info['outputs'] = merged_outputs
     
     def _is_widget_class(self, node: ast.ClassDef) -> bool:
         """Check if a class is a widget class."""
@@ -1185,7 +1030,7 @@ class WidgetDiscovery:
         return ports
     
     def _parse_io_call(self, node, port_id: str) -> Optional[Dict]:
-        """Parse Input(...) or Output(...) call."""
+        """Parse Input(...), Output(...), or MultiInput(...) call."""
         if not isinstance(node, ast.Call):
             return None
         
@@ -1195,7 +1040,7 @@ class WidgetDiscovery:
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
         
-        if func_name not in ('Input', 'Output'):
+        if func_name not in ('Input', 'Output', 'MultiInput'):
             return None
         
         port_name = port_id
@@ -1212,7 +1057,13 @@ class WidgetDiscovery:
             elif isinstance(type_node, ast.Attribute):
                 port_type = self._simplify_type_name(type_node.attr)
         
-        return {'id': port_id, 'name': port_name, 'type': port_type}
+        result = {'id': port_id, 'name': port_name, 'type': port_type}
+        
+        # Mark as multiple if it's a MultiInput
+        if func_name == 'MultiInput':
+            result['multiple'] = True
+        
+        return result
     
     def _simplify_type_name(self, type_name: str) -> str:
         """Simplify Orange3 type names."""
