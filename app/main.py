@@ -25,6 +25,24 @@ from pydantic import BaseModel
 # Server startup timestamp - used to detect server restarts
 SERVER_START_TIME = int(time.time())
 
+# Server version - read from VERSION file
+def get_server_version() -> str:
+    """Read server version from VERSION file."""
+    version_paths = [
+        Path(__file__).parent.parent.parent / "VERSION",  # backend/../VERSION
+        Path(__file__).parent.parent / "VERSION",  # backend/VERSION
+        Path("VERSION"),  # current directory
+    ]
+    for path in version_paths:
+        if path.exists():
+            try:
+                return path.read_text().strip()
+            except Exception:
+                pass
+    return "unknown"
+
+SERVER_VERSION = get_server_version()
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -279,6 +297,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "orange3-web",
+        "version": SERVER_VERSION,
         "orange3": availability.get("orange3", False),
         "database": "sqlite",
         "locks": "asyncio",
