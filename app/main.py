@@ -116,7 +116,7 @@ from .widgets import (
     data_info_router,
     feature_statistics_router,
 )
-from .core.config import get_upload_dir
+from .core.config import get_upload_dir, get_config
 from .routes import (
     workflow_router,
     widget_registry_router,
@@ -322,15 +322,24 @@ api_v1 = APIRouter(prefix="/api/v1")
 async def health_check():
     """Health check endpoint."""
     availability = get_availability()
-    upload_dir = get_upload_dir()
+    config = get_config()
+    storage_type = config.storage.type  # 'database' or 'filesystem'
+    
+    # Storage path depends on storage type
+    if storage_type == "database":
+        storage_path = config.database.url or "sqlite:///./orange3.db"
+    else:
+        storage_path = str(get_upload_dir())
+    
     return {
         "status": "healthy",
         "service": "orange3-web",
         "version": SERVER_VERSION,
         "orange3": availability.get("orange3", False),
         "database": "sqlite",
-        "storage_type": "local",
-        "storage_path": str(upload_dir),
+        "storage_type": storage_type,
+        "storage_path": storage_path,
+        "max_file_size_mb": config.storage.max_db_file_size // (1024 * 1024),
         "locks": "asyncio",
         "server_start_time": SERVER_START_TIME
     }
