@@ -2,21 +2,21 @@
 Configuration Management Module.
 
 Supports configuration from multiple sources with priority:
-    1. Configuration file (orange3-web.properties)
+    1. Configuration file (orange3-web-backend.properties)
     2. Environment variables
     3. Default values
 
 Configuration file locations (searched in order):
-    1. ./orange3-web.properties (current directory)
-    2. /etc/orange3-web/orange3-web.properties
-    3. ~/.orange3-web/orange3-web.properties
+    1. ./orange3-web-backend.properties (current directory)
+    2. /etc/orange3-web/orange3-web-backend.properties
+    3. ~/.orange3-web/orange3-web-backend.properties
 
 Properties file format:
     # Comment
     key=value
     key.nested=value
 
-Example orange3-web.properties:
+Example orange3-web-backend.properties:
     # Database
     database.url=postgresql+asyncpg://user:pass@localhost:5432/orange3
     
@@ -186,9 +186,9 @@ class ConfigManager:
     
     # Configuration file search paths
     CONFIG_FILE_PATHS = [
-        Path("./orange3-web.properties"),
-        Path("/etc/orange3-web/orange3-web.properties"),
-        Path.home() / ".orange3-web" / "orange3-web.properties",
+        Path("./orange3-web-backend.properties"),
+        Path("/etc/orange3-web/orange3-web-backend.properties"),
+        Path.home() / ".orange3-web" / "orange3-web-backend.properties",
     ]
     
     # Mapping: config file key -> environment variable

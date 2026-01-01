@@ -1,122 +1,37 @@
-# Orange3-Web Backend Configuration
-# 
-# 이 파일을 orange3-web.properties로 복사하여 사용하세요.
-# 
-# 설정 우선순위:
-#   1. 설정 파일 (orange3-web.properties)
-#   2. 환경변수
-#   3. 기본값
-#
-# 설정 파일 검색 위치 (순서대로):
-#   1. ./orange3-web.properties (현재 디렉토리)
-#   2. /etc/orange3-web/orange3-web.properties
-#   3. ~/.orange3-web/orange3-web.properties
-
-# =============================================================================
-# Server Configuration
-# =============================================================================
-
-# 서버 바인딩 호스트
-# 환경변수: HOST
-server.host=0.0.0.0
-
-# 서버 포트
-# 환경변수: PORT
-server.port=8000
-
-# 워커 수 (프로세스 수)
-# 환경변수: WORKERS
-server.workers=1
-
-# 개발 모드 (자동 리로드)
-# 환경변수: RELOAD
-server.reload=false
+# Orange3 Web Backend Configuration
+# Copy this file to orange3-web-backend.properties and modify as needed
 
 # =============================================================================
 # Database Configuration
 # =============================================================================
+# database.url=postgresql+asyncpg://user:pass@localhost:5432/orange3
+# database.url=mysql+aiomysql://user:pass@localhost:3306/orange3
 
-# 데이터베이스 URL (전체 연결 문자열)
-# 환경변수: DATABASE_URL
-#
-# 지원 데이터베이스:
-#   SQLite:      sqlite+aiosqlite:///path/to/db.db
-#   PostgreSQL:  postgresql+asyncpg://user:pass@host:5432/dbname
-#   MySQL:       mysql+aiomysql://user:pass@host:3306/dbname
-#   Oracle:      oracle+oracledb://user:pass@host:1521/dbname
-#
-# 예시:
-# database.url=postgresql+asyncpg://orange:password@localhost:5432/orange3
-# database.url=mysql+aiomysql://orange:password@localhost:3306/orange3
-
-# SQLite 데이터베이스 디렉토리 (database.url이 설정되지 않은 경우 사용)
-# 환경변수: DATABASE_DIR
-# database.dir=/var/lib/orange3-web
-
-# 데이터베이스 쿼리 로그 출력
-# 환경변수: DATABASE_ECHO
-database.echo=false
+# =============================================================================
+# Server Configuration
+# =============================================================================
+# server.host=0.0.0.0
+# server.port=8000
+# server.workers=4
 
 # =============================================================================
 # Path Configuration
 # =============================================================================
-
-# 파일 업로드 기본 디렉토리
-# 환경변수: UPLOAD_DIR
 # path.upload=/var/lib/orange3-web/uploads
-
-# 코퍼스 파일 디렉토리
-# 환경변수: CORPUS_DIR
 # path.corpus=/var/lib/orange3-web/corpus
-
-# 데이터셋 캐시 디렉토리
-# 환경변수: DATASETS_CACHE_DIR
 # path.datasets_cache=/var/lib/orange3-web/datasets_cache
+# path.database=/var/lib/orange3-web
 
 # =============================================================================
 # Storage Configuration
 # =============================================================================
-
-# 파일 저장 방식
-# - filesystem: 파일시스템에 저장 (단일 서버용, 기본값)
-# - database: 데이터베이스에 BLOB으로 저장 (멀티 서버용)
-# 환경변수: STORAGE_TYPE
-storage.type=database
-
-# 데이터베이스 저장 시 최대 파일 크기 (바이트)
-# 환경변수: MAX_DB_FILE_SIZE
-# 기본값: 52428800 (50MB)
+# Supported types: sqlite (default), mysql, postgresql, oracle, filesystem, local
+storage.type=sqlite
 storage.max_db_file_size=52428800
 
 # =============================================================================
 # Logging Configuration
 # =============================================================================
-
-# 로그 레벨 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-# 환경변수: LOG_LEVEL
-log.level=INFO
-
-# 데이터베이스 쿼리 로그 출력 (database.echo와 동일)
-log.database_echo=false
-
-# =============================================================================
-# OpenTelemetry Configuration
-# =============================================================================
-
-# OTel 활성화 여부
-# 환경변수: OTEL_ENABLED
-otel.enabled=true
-
-# OTLP Collector 엔드포인트 (예: localhost:4318)
-# 설정하지 않으면 내부 수집만 하고 외부 전송 안 함
-# 환경변수: OTEL_ENDPOINT
-# otel.endpoint=localhost:4318
-
-# 콘솔 출력 활성화 (개발/디버깅용)
-# 환경변수: OTEL_CONSOLE
-otel.console=false
-
-# 환경 이름 (development, staging, production)
-# 환경변수: ENVIRONMENT
-otel.environment=development
+# log.level=INFO
+# log.database_echo=false
 
