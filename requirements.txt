@@ -30,8 +30,8 @@ aiosqlite>=0.22.0
 # oracledb>=2.5.0
 
 # Orange3 Data Mining
-orange3==3.40.0
-orange3-text>=1.16.3
+orange3>=3.40.0,<4.0
+orange3-text>=1.16.3,<2.0
 
 # PyQt6 (for Orange3)
 pyqt6>=6.10.0,<7.0
