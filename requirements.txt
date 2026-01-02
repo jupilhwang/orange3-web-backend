@@ -20,8 +20,8 @@ greenlet>=3.3.0
 # SQLite (default)
 aiosqlite>=0.22.0
 
-# PostgreSQL (optional - uncomment if using PostgreSQL)
-# asyncpg>=0.30.0
+# PostgreSQL
+asyncpg>=0.30.0
 
 # MySQL/MariaDB (optional - uncomment if using MySQL)
 # aiomysql>=0.2.0

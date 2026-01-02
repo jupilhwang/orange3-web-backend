@@ -323,6 +323,8 @@ async def upload_corpus_file(
             "tenantId": x_tenant_id,
             "storageType": STORAGE_TYPE,
             "fileSize": stored_file.file_size,
+            "originalSize": stored_file.original_size,
+            "isCompressed": stored_file.is_compressed,
             "uploadedAt": datetime.now().isoformat()
         }
         

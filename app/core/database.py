@@ -38,10 +38,23 @@ _engine_kwargs = {
     "echo": _config.database.echo or _config.log.database_echo,
 }
 
-# SQLite specific settings
+# Database-specific settings
 if "sqlite" in DATABASE_URL:
+    # SQLite: single connection with StaticPool
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
     _engine_kwargs["poolclass"] = StaticPool
+elif "postgresql" in DATABASE_URL or "postgres" in DATABASE_URL:
+    # PostgreSQL: connection pooling for better concurrency
+    _engine_kwargs["pool_size"] = getattr(_config.database, 'pool_size', 5)
+    _engine_kwargs["max_overflow"] = getattr(_config.database, 'max_overflow', 10)
+    _engine_kwargs["pool_timeout"] = getattr(_config.database, 'pool_timeout', 30)
+    _engine_kwargs["pool_recycle"] = getattr(_config.database, 'pool_recycle', 1800)
+    _engine_kwargs["pool_pre_ping"] = True  # Verify connections before use
+elif "mysql" in DATABASE_URL:
+    # MySQL: connection pooling
+    _engine_kwargs["pool_size"] = getattr(_config.database, 'pool_size', 5)
+    _engine_kwargs["max_overflow"] = getattr(_config.database, 'max_overflow', 10)
+    _engine_kwargs["pool_pre_ping"] = True
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 

@@ -9,7 +9,7 @@ Features:
 - Async locks for concurrent access protection
 - Multi-tenant support via X-Tenant-ID header
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, APIRouter, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, APIRouter, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 import os
@@ -265,6 +265,12 @@ async def lifespan(app: FastAPI):
                     print(f"   ✗ Could not deregister from {frontend_url}: {e}")
     
     print("\nShutting down Orange3 Web Backend...")
+    
+    # Shutdown CPU/IO executor pools
+    from .widgets.data_utils import shutdown_executors
+    shutdown_executors()
+    print("Executor pools shutdown.")
+    
     await close_db()
     print("Database connections closed.")
 
@@ -338,13 +344,24 @@ async def health_check():
     # Calculate uptime
     uptime_seconds = time.time() - SERVER_START_TIME
     
+    # Determine database type from URL
+    db_url = config.database.url or ""
+    if "postgresql" in db_url or "postgres" in db_url:
+        database_type = "postgresql"
+    elif "mysql" in db_url:
+        database_type = "mysql"
+    elif "oracle" in db_url:
+        database_type = "oracle"
+    else:
+        database_type = "sqlite"
+    
     return {
         "status": "healthy",
         "service": "orange3-web-backend",
         "version": SERVER_VERSION,
         "uptime_seconds": round(uptime_seconds, 2),
         "orange3_available": availability.get("orange3", False),
-        "database_type": "sqlite",
+        "database_type": database_type,
         "storage_type": storage_type,
         "storage_path": storage_path,
         "max_file_size_mb": config.storage.max_db_file_size // (1024 * 1024),
@@ -559,29 +576,63 @@ def get_mock_data_info(path: str):
 
 
 @api_v1.get("/data/load", tags=["Data"])
-async def load_data_from_path(path: str):
-    """Load data from a local file path."""
+async def load_data_from_path(
+    path: str,
+    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID")
+):
+    """Load data from a local file path or file ID."""
+    import tempfile
+    from .core.file_storage import get_file, get_file_metadata
+    
     # If Orange3 not available, return mock data
     if not ORANGE_AVAILABLE:
         return get_mock_data_info(path)
     
-    # Check if it's an uploaded file
-    if path.startswith("uploads/"):
+    actual_path = path
+    temp_file = None
+    metadata = None  # Will be set for file: paths
+    
+    # Check if it's a file ID reference (file:{uuid})
+    if path.startswith("file:"):
+        file_id = path.replace("file:", "")
+        logger.info(f"Loading file by ID: {file_id}, tenant: {x_tenant_id}")
+        
+        # Get file metadata and content from storage
+        metadata = await get_file_metadata(file_id, x_tenant_id)
+        if not metadata:
+            logger.warning(f"File not found: {file_id}")
+            return get_mock_data_info(path)
+        
+        content = await get_file(file_id, x_tenant_id)
+        if not content:
+            logger.warning(f"File content not found: {file_id}")
+            return get_mock_data_info(path)
+        
+        # Write to temp file for Orange3 to load
+        suffix = Path(metadata.filename).suffix or '.tab'
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_file.write(content)
+        temp_file.close()
+        actual_path = temp_file.name
+        logger.info(f"Created temp file: {actual_path} for {metadata.filename}")
+    
+    # Check if it's an uploaded file (legacy path)
+    elif path.startswith("uploads/"):
         upload_dir = get_upload_dir()
         full_path = upload_dir / path.replace("uploads/", "")
         if full_path.exists():
-            path = str(full_path)
+            actual_path = str(full_path)
     elif path.startswith("datasets/"):
         # Built-in Orange3 datasets - extract just the name without extension
         # e.g., "datasets/iris.tab" -> "iris"
         dataset_name = path.replace("datasets/", "").split(".")[0]
-        path = dataset_name
+        actual_path = dataset_name
     
     try:
         from Orange.data import Table
         
         # Try to load the data
-        data = Table(path)
+        data = Table(actual_path)
         
         # Get column info
         columns = []
@@ -614,9 +665,16 @@ async def load_data_from_path(path: str):
                 "values": ""
             })
         
+        # Get display name (prefer original filename from metadata)
+        if path.startswith("file:") and metadata:
+            display_name = Path(metadata.filename).stem
+        else:
+            display_name = data.name or path.split("/")[-1].split(":")[-1]
+        
         return {
-            "name": data.name or path.split("/")[-1],
+            "name": display_name,
             "description": "",
+            "path": path,  # Return original path for reference
             "instances": len(data),
             "features": len(data.domain.attributes),
             "missingValues": data.has_missing(),
@@ -626,8 +684,16 @@ async def load_data_from_path(path: str):
             "columns": columns
         }
     except Exception as e:
+        logger.error(f"Failed to load data from {actual_path}: {e}")
         # Fallback to mock data on error
         return get_mock_data_info(path)
+    finally:
+        # Clean up temp file if created
+        if temp_file and Path(temp_file.name).exists():
+            try:
+                Path(temp_file.name).unlink()
+            except Exception:
+                pass
 
 
 @api_v1.post("/data/load-url", tags=["Data"])

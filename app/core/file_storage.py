@@ -13,14 +13,18 @@ Supported storage types:
 Configuration (priority: config file > env var > default):
     storage.type: 'sqlite' (default), 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
     storage.max_db_file_size: Maximum file size for DB storage (default: 50MB)
+    storage.compression_enabled: Enable zlib compression for DB storage (default: True)
+    storage.compression_level: Compression level 1-9 (default: 6)
+    storage.compression_min_size: Minimum size to compress (default: 1KB)
 """
 
 import hashlib
 import logging
+import zlib
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, BinaryIO, Union
+from typing import Optional, List, BinaryIO, Union, Tuple
 from dataclasses import dataclass
 
 from sqlalchemy import select, delete
@@ -35,6 +39,9 @@ logger = logging.getLogger(__name__)
 _config = get_config()
 STORAGE_TYPE = _config.storage.type
 MAX_DB_FILE_SIZE = _config.storage.max_db_file_size
+COMPRESSION_ENABLED = _config.storage.compression_enabled
+COMPRESSION_LEVEL = _config.storage.compression_level
+COMPRESSION_MIN_SIZE = _config.storage.compression_min_size
 
 
 @dataclass
@@ -44,7 +51,7 @@ class StoredFile:
     filename: str
     original_filename: str
     content_type: str
-    file_size: int
+    file_size: int  # Stored size (compressed if applicable)
     category: str
     tenant_id: str
     checksum: Optional[str] = None
@@ -52,6 +59,59 @@ class StoredFile:
     # For filesystem storage, this is the file path
     # For database storage, this is None (data is fetched separately)
     file_path: Optional[str] = None
+    # Compression info (DB storage only)
+    is_compressed: bool = False
+    original_size: Optional[int] = None  # Original size before compression
+
+
+def compress_data(data: bytes) -> Tuple[bytes, bool]:
+    """
+    Compress data using zlib if enabled and beneficial.
+    
+    Returns:
+        Tuple of (data, is_compressed) - compressed data if compression is beneficial,
+        otherwise original data with is_compressed=False.
+    """
+    if not COMPRESSION_ENABLED:
+        return data, False
+    
+    if len(data) < COMPRESSION_MIN_SIZE:
+        return data, False
+    
+    try:
+        compressed = zlib.compress(data, COMPRESSION_LEVEL)
+        # Only use compression if it actually reduces size
+        if len(compressed) < len(data):
+            logger.debug(f"Compressed {len(data)} -> {len(compressed)} bytes "
+                        f"({100 - len(compressed) * 100 // len(data)}% reduction)")
+            return compressed, True
+        else:
+            logger.debug(f"Compression not beneficial for {len(data)} bytes, skipping")
+            return data, False
+    except Exception as e:
+        logger.warning(f"Compression failed: {e}, storing uncompressed")
+        return data, False
+
+
+def decompress_data(data: bytes, is_compressed: bool) -> bytes:
+    """
+    Decompress data if it was compressed.
+    
+    Args:
+        data: The stored data (possibly compressed)
+        is_compressed: Whether the data is compressed
+        
+    Returns:
+        Original uncompressed data
+    """
+    if not is_compressed:
+        return data
+    
+    try:
+        return zlib.decompress(data)
+    except Exception as e:
+        logger.error(f"Decompression failed: {e}")
+        raise ValueError(f"Failed to decompress data: {e}")
 
 
 class StorageBackend(ABC):
@@ -269,10 +329,12 @@ class DatabaseStorage(StorageBackend):
         category: str = "upload",
         original_filename: Optional[str] = None,
     ) -> StoredFile:
-        """Save file to database. Uses original filename (tenant separation ensures uniqueness)."""
-        if len(content) > MAX_DB_FILE_SIZE:
+        """Save file to database with optional compression."""
+        original_size = len(content)
+        
+        if original_size > MAX_DB_FILE_SIZE:
             raise ValueError(
-                f"File size ({len(content)} bytes) exceeds maximum "
+                f"File size ({original_size} bytes) exceeds maximum "
                 f"({MAX_DB_FILE_SIZE} bytes) for database storage"
             )
         
@@ -281,7 +343,12 @@ class DatabaseStorage(StorageBackend):
         
         # Generate UUID for file ID
         file_id = generate_uuid()
+        # Checksum of original (uncompressed) content
         checksum = hashlib.sha256(content).hexdigest()
+        
+        # Compress if enabled and beneficial
+        stored_data, is_compressed = compress_data(content)
+        stored_size = len(stored_data)
         
         async with self._session_maker() as session:
             # Check if file already exists and delete it (overwrite)
@@ -295,35 +362,45 @@ class DatabaseStorage(StorageBackend):
             )
             
             file_entry = FileStorageDB(
-                id=file_id,  # Use the same UUID for DB ID and returned ID
+                id=file_id,
                 tenant_id=tenant_id,
                 filename=original_filename,
                 original_filename=original_filename,
                 content_type=content_type,
-                file_size=len(content),
+                file_size=stored_size,  # Stored (possibly compressed) size
+                original_size=original_size,  # Original size before compression
                 checksum=checksum,
+                is_compressed=is_compressed,
                 category=category,
-                file_data=content,
+                file_data=stored_data,  # Possibly compressed data
             )
             session.add(file_entry)
             await session.commit()
             
-            logger.info(f"Saved file to database: {original_filename} (id={file_id}, {len(content)} bytes)")
+            compression_info = ""
+            if is_compressed:
+                ratio = 100 - (stored_size * 100 // original_size) if original_size > 0 else 0
+                compression_info = f", compressed {ratio}%"
+            
+            logger.info(f"Saved file to database: {original_filename} (id={file_id}, "
+                       f"{original_size} -> {stored_size} bytes{compression_info})")
             
             return StoredFile(
-                id=file_id,  # Return UUID, not filename
+                id=file_id,
                 filename=original_filename,
                 original_filename=original_filename,
                 content_type=content_type,
-                file_size=len(content),
+                file_size=stored_size,
                 category=category,
                 tenant_id=tenant_id,
                 checksum=checksum,
                 created_at=file_entry.created_at,
+                is_compressed=is_compressed,
+                original_size=original_size,
             )
     
     async def get(self, file_id: str, tenant_id: Optional[str] = None) -> Optional[bytes]:
-        """Get file content from database."""
+        """Get file content from database, decompressing if necessary."""
         async with self._session_maker() as session:
             query = select(FileStorageDB).where(FileStorageDB.id == file_id)
             if tenant_id:
@@ -333,7 +410,8 @@ class DatabaseStorage(StorageBackend):
             file_entry = result.scalar_one_or_none()
             
             if file_entry:
-                return file_entry.file_data
+                # Decompress if data was stored compressed
+                return decompress_data(file_entry.file_data, file_entry.is_compressed)
             return None
     
     async def get_metadata(self, file_id: str, tenant_id: Optional[str] = None) -> Optional[StoredFile]:
@@ -357,6 +435,8 @@ class DatabaseStorage(StorageBackend):
                     tenant_id=file_entry.tenant_id,
                     checksum=file_entry.checksum,
                     created_at=file_entry.created_at,
+                    is_compressed=file_entry.is_compressed,
+                    original_size=file_entry.original_size,
                 )
             return None
     
@@ -401,6 +481,8 @@ class DatabaseStorage(StorageBackend):
                     tenant_id=file_entry.tenant_id,
                     checksum=file_entry.checksum,
                     created_at=file_entry.created_at,
+                    is_compressed=file_entry.is_compressed,
+                    original_size=file_entry.original_size,
                 ))
             
             return files

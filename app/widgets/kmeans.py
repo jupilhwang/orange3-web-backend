@@ -228,7 +228,7 @@ async def cluster_kmeans(
         data_path = f"kmeans/{cluster_id}"
         if x_session_id:
             # Store in session-based storage
-            DataSessionManager.store(x_session_id, data_path, annotated_data)
+            await DataSessionManager.store(x_session_id, data_path, annotated_data)
             logger.debug(f"[k-Means] Stored result in session {x_session_id}: {data_path}")
         else:
             # Fallback to legacy storage

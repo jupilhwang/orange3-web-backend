@@ -440,7 +440,8 @@ async def get_reduced_data(
         import uuid
         result_id = f"feature_stats_{uuid.uuid4().hex[:8]}"
         result_path = f"feature_stats/{result_id}"
-        DataSessionManager.store(result_path, reduced_data, session_id=x_session_id)
+        session_id = x_session_id or "default"
+        await DataSessionManager.store(session_id, result_path, reduced_data)
         
         return ReducedDataResponse(
             success=True,

@@ -34,6 +34,9 @@ Example orange3-web-backend.properties:
     # Storage
     storage.type=database
     storage.max_db_file_size=52428800
+    storage.compression_enabled=true
+    storage.compression_level=6
+    storage.compression_min_size=1024
     
     # Logging
     log.level=INFO
@@ -121,6 +124,11 @@ class DatabaseConfig:
     url: Optional[str] = None
     dir: Optional[str] = None
     echo: bool = False
+    # Connection pool settings (for PostgreSQL/MySQL)
+    pool_size: int = 5
+    max_overflow: int = 10
+    pool_timeout: int = 30
+    pool_recycle: int = 1800
     
     def get_url(self, app_root: Path) -> str:
         """Get database URL, constructing from dir if url not set."""
@@ -152,9 +160,17 @@ class StorageConfig:
     - 'postgresql': PostgreSQL database
     - 'oracle': Oracle database
     - 'filesystem' or 'local': Local filesystem
+    
+    Compression settings (DB storage only):
+    - compression_enabled: Enable zlib compression (default: True)
+    - compression_level: 1-9, higher = smaller but slower (default: 6)
+    - compression_min_size: Minimum file size to compress in bytes (default: 1KB)
     """
     type: str = "sqlite"  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
     max_db_file_size: int = 50 * 1024 * 1024  # 50MB
+    compression_enabled: bool = True  # Enable compression for DB storage
+    compression_level: int = 6  # zlib compression level (1-9)
+    compression_min_size: int = 1024  # Minimum size to compress (1KB)
 
 
 @dataclass
@@ -213,6 +229,9 @@ class ConfigManager:
         # Storage
         "storage.type": "STORAGE_TYPE",
         "storage.max_db_file_size": "MAX_DB_FILE_SIZE",
+        "storage.compression_enabled": "STORAGE_COMPRESSION_ENABLED",
+        "storage.compression_level": "STORAGE_COMPRESSION_LEVEL",
+        "storage.compression_min_size": "STORAGE_COMPRESSION_MIN_SIZE",
         
         # Logging
         "log.level": "LOG_LEVEL",
@@ -315,6 +334,10 @@ class ConfigManager:
                 url=self.get("database.url", None),
                 dir=self.get("database.dir", None),
                 echo=self.get("database.echo", False, bool),
+                pool_size=self.get("database.pool_size", 5, int),
+                max_overflow=self.get("database.max_overflow", 10, int),
+                pool_timeout=self.get("database.pool_timeout", 30, int),
+                pool_recycle=self.get("database.pool_recycle", 1800, int),
             ),
             path=PathConfig(
                 upload=self.get("path.upload", None),
@@ -325,6 +348,9 @@ class ConfigManager:
             storage=StorageConfig(
                 type=self.get("storage.type", "sqlite"),
                 max_db_file_size=self.get("storage.max_db_file_size", 50 * 1024 * 1024, int),
+                compression_enabled=self.get("storage.compression_enabled", True, bool),
+                compression_level=self.get("storage.compression_level", 6, int),
+                compression_min_size=self.get("storage.compression_min_size", 1024, int),
             ),
             log=LogConfig(
                 level=self.get("log.level", "INFO"),

@@ -24,6 +24,7 @@ class FileStorageDB(Base):
     """
     File storage database model.
     Stores uploaded files in database (BLOB) for multi-server environments.
+    Supports zlib compression for reduced storage size.
     """
     __tablename__ = "file_storage"
     
@@ -34,13 +35,17 @@ class FileStorageDB(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), default="application/octet-stream")
-    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA256
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)  # Stored size (compressed if applicable)
+    original_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Original size before compression
+    checksum: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SHA256 of original content
+    
+    # Compression flag (for backward compatibility with existing data)
+    is_compressed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     # File category: 'upload', 'corpus', 'dataset', etc.
     category: Mapped[str] = mapped_column(String(50), default="upload", index=True)
     
-    # Actual file data (BLOB)
+    # Actual file data (BLOB) - may be compressed
     file_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     
     # Timestamps

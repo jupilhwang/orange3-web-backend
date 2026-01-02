@@ -141,7 +141,7 @@ async def sample_data(
         
         if sample_data is not None:
             if x_session_id:
-                DataSessionManager.store(x_session_id, sample_path, sample_data)
+                await DataSessionManager.store(x_session_id, sample_path, sample_data)
                 logger.debug(f"Stored sample data in session {x_session_id}: {sample_path}")
             else:
                 _sampler_results[f"sample_{sample_id}"] = {
@@ -152,7 +152,7 @@ async def sample_data(
         
         if remaining_data is not None:
             if x_session_id:
-                DataSessionManager.store(x_session_id, remaining_path, remaining_data)
+                await DataSessionManager.store(x_session_id, remaining_path, remaining_data)
                 logger.debug(f"Stored remaining data in session {x_session_id}: {remaining_path}")
             else:
                 _sampler_results[f"remaining_{remaining_id}"] = {

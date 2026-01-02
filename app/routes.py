@@ -55,6 +55,10 @@ except ImportError:
 # Key: tenant_id:workflow_id -> OrangeSchemeAdapter
 _workflow_adapters: Dict[str, Any] = {}
 
+# 어댑터 딕셔너리 접근 보호를 위한 락
+import asyncio
+_adapters_lock = asyncio.Lock()
+
 # Widget registry reference (set by main.py)
 _registry_getter = None
 
@@ -86,14 +90,15 @@ def get_workflow_adapters() -> Dict[str, Any]:
 async def get_workflow_adapter(tenant_id: str, workflow_id: str) -> Optional[Any]:
     """Get workflow adapter with lock protection."""
     key = f"{tenant_id}:{workflow_id}"
-    return _workflow_adapters.get(key)
+    async with _adapters_lock:
+        return _workflow_adapters.get(key)
 
 
 async def create_workflow_adapter(tenant_id: str, workflow_id: str) -> Any:
     """Create a new workflow adapter with lock protection."""
     key = f"{tenant_id}:{workflow_id}"
     
-    async with lock_workflow(workflow_id):
+    async with _adapters_lock:
         if key in _workflow_adapters:
             return _workflow_adapters[key]
         
@@ -112,7 +117,7 @@ async def delete_workflow_adapter(tenant_id: str, workflow_id: str) -> bool:
     """Delete workflow adapter with lock protection."""
     key = f"{tenant_id}:{workflow_id}"
     
-    async with lock_workflow(workflow_id):
+    async with _adapters_lock:
         if key in _workflow_adapters:
             del _workflow_adapters[key]
             return True
@@ -134,7 +139,10 @@ async def list_workflows(tenant: Tenant = Depends(get_current_tenant)):
     """List all workflows for tenant."""
     result = []
     
-    for key, adapter in _workflow_adapters.items():
+    async with _adapters_lock:
+        adapters_snapshot = dict(_workflow_adapters)
+    
+    for key, adapter in adapters_snapshot.items():
         if key.startswith(f"{tenant.id}:"):
             workflow_id = key.split(":", 1)[1]
             

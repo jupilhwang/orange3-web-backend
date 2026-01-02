@@ -4,11 +4,13 @@ Handles various data path formats including k-Means clustered data.
 Provides session-based data isolation for multi-user environments.
 """
 
+import asyncio
 import logging
 import time
-import threading
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -24,36 +26,151 @@ except ImportError:
 
 
 # =============================================================================
+# CPU-bound task executor for Orange3 operations
+# =============================================================================
+
+# Process pool for CPU-bound Orange3 operations (GIL bypass)
+# Use max 4 workers to avoid memory issues with Orange3
+_process_pool: Optional[ProcessPoolExecutor] = None
+
+# Thread pool for I/O-bound operations
+_thread_pool: Optional[ThreadPoolExecutor] = None
+
+T = TypeVar('T')
+
+
+def get_process_pool() -> ProcessPoolExecutor:
+    """Get or create the process pool executor."""
+    global _process_pool
+    if _process_pool is None:
+        import os
+        max_workers = min(4, os.cpu_count() or 2)
+        _process_pool = ProcessPoolExecutor(max_workers=max_workers)
+        logger.info(f"Created ProcessPoolExecutor with {max_workers} workers")
+    return _process_pool
+
+
+def get_thread_pool() -> ThreadPoolExecutor:
+    """Get or create the thread pool executor."""
+    global _thread_pool
+    if _thread_pool is None:
+        import os
+        max_workers = min(8, (os.cpu_count() or 2) * 2)
+        _thread_pool = ThreadPoolExecutor(max_workers=max_workers)
+        logger.info(f"Created ThreadPoolExecutor with {max_workers} workers")
+    return _thread_pool
+
+
+async def run_in_process(func: Callable[..., T], *args, **kwargs) -> T:
+    """
+    Run a CPU-bound function in a separate process.
+    
+    This bypasses the GIL and allows true parallel execution for
+    CPU-intensive Orange3 operations like clustering, classification, etc.
+    
+    Args:
+        func: Function to execute (must be picklable)
+        *args: Positional arguments to pass to the function
+        **kwargs: Keyword arguments to pass to the function
+        
+    Returns:
+        Result from the function
+        
+    Example:
+        # In an async endpoint:
+        result = await run_in_process(heavy_computation, data, k=5)
+    """
+    loop = asyncio.get_event_loop()
+    pool = get_process_pool()
+    
+    # Create a partial function if kwargs are provided
+    if kwargs:
+        func = partial(func, **kwargs)
+    
+    return await loop.run_in_executor(pool, func, *args)
+
+
+async def run_in_thread(func: Callable[..., T], *args, **kwargs) -> T:
+    """
+    Run a blocking I/O function in a thread pool.
+    
+    Use this for I/O-bound operations that block (file reading, etc.)
+    but don't benefit from process-level parallelism.
+    
+    Args:
+        func: Function to execute
+        *args: Positional arguments
+        **kwargs: Keyword arguments
+        
+    Returns:
+        Result from the function
+    """
+    loop = asyncio.get_event_loop()
+    pool = get_thread_pool()
+    
+    if kwargs:
+        func = partial(func, **kwargs)
+    
+    return await loop.run_in_executor(pool, func, *args)
+
+
+def shutdown_executors():
+    """Shutdown all executor pools gracefully."""
+    global _process_pool, _thread_pool
+    
+    if _process_pool is not None:
+        _process_pool.shutdown(wait=True)
+        _process_pool = None
+        logger.info("ProcessPoolExecutor shutdown complete")
+    
+    if _thread_pool is not None:
+        _thread_pool.shutdown(wait=True)
+        _thread_pool = None
+        logger.info("ThreadPoolExecutor shutdown complete")
+
+
+# =============================================================================
 # DataSessionManager - Session-based data isolation
 # =============================================================================
 
 class DataSessionManager:
     """
-    세션 기반 데이터 격리 관리자.
+    세션 기반 데이터 격리 관리자 (asyncio 호환).
     
     다중 사용자 환경에서 각 사용자의 데이터를 격리합니다.
     TTL(Time-To-Live) 기반 자동 만료를 지원합니다.
     
+    Note:
+        모든 메서드는 async입니다. 동기 컨텍스트에서는 
+        store_sync/get_sync를 사용하세요.
+    
     사용 예시:
-        # 데이터 저장
-        DataSessionManager.store("session_abc", "sampler/sample_123", table)
+        # 데이터 저장 (async)
+        await DataSessionManager.store("session_abc", "sampler/sample_123", table)
         
-        # 데이터 조회
-        data = DataSessionManager.get("session_abc", "sampler/sample_123")
+        # 데이터 조회 (async)
+        data = await DataSessionManager.get("session_abc", "sampler/sample_123")
         
-        # 세션 정리
-        DataSessionManager.cleanup("session_abc")
+        # 동기 저장 (sync context)
+        DataSessionManager.store_sync("session_abc", "data_id", table)
     """
     
     _sessions: Dict[str, Dict[str, Any]] = {}
-    _lock = threading.Lock()
+    _lock: asyncio.Lock = None  # Lazy initialization
     DEFAULT_TTL = 3600  # 1시간 (초)
     
     @classmethod
-    def store(cls, session_id: str, data_id: str, data: 'Table', 
-              ttl: int = None, metadata: dict = None) -> str:
+    def _get_lock(cls) -> asyncio.Lock:
+        """Get or create the async lock (lazy initialization)."""
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
+    
+    @classmethod
+    async def store(cls, session_id: str, data_id: str, data: 'Table', 
+                    ttl: int = None, metadata: dict = None) -> str:
         """
-        세션에 데이터 저장.
+        세션에 데이터 저장 (async).
         
         Args:
             session_id: 세션 ID (브라우저/사용자별 고유)
@@ -65,7 +182,7 @@ class DataSessionManager:
         Returns:
             저장된 데이터의 전체 경로 (data_id)
         """
-        with cls._lock:
+        async with cls._get_lock():
             if session_id not in cls._sessions:
                 cls._sessions[session_id] = {}
             
@@ -80,9 +197,30 @@ class DataSessionManager:
             return data_id
     
     @classmethod
-    def get(cls, session_id: str, data_id: str) -> Optional['Table']:
+    def store_sync(cls, session_id: str, data_id: str, data: 'Table', 
+                   ttl: int = None, metadata: dict = None) -> str:
         """
-        세션에서 데이터 조회.
+        세션에 데이터 저장 (sync 버전 - 동기 컨텍스트용).
+        
+        Note: 락 없이 동작합니다. 동기 컨텍스트에서만 사용하세요.
+        """
+        if session_id not in cls._sessions:
+            cls._sessions[session_id] = {}
+        
+        cls._sessions[session_id][data_id] = {
+            "data": data,
+            "created_at": time.time(),
+            "expires_at": time.time() + (ttl or cls.DEFAULT_TTL),
+            "metadata": metadata or {}
+        }
+        
+        logger.info(f"Stored data (sync): session={session_id}, id={data_id}")
+        return data_id
+    
+    @classmethod
+    async def get(cls, session_id: str, data_id: str) -> Optional['Table']:
+        """
+        세션에서 데이터 조회 (async).
         
         Args:
             session_id: 세션 ID
@@ -91,7 +229,7 @@ class DataSessionManager:
         Returns:
             Orange.data.Table 또는 None (없거나 만료됨)
         """
-        with cls._lock:
+        async with cls._get_lock():
             session_data = cls._sessions.get(session_id, {})
             entry = session_data.get(data_id)
             
@@ -107,9 +245,30 @@ class DataSessionManager:
             return entry.get("data")
     
     @classmethod
-    def get_metadata(cls, session_id: str, data_id: str) -> Optional[dict]:
-        """데이터의 메타데이터 조회."""
-        with cls._lock:
+    def get_sync(cls, session_id: str, data_id: str) -> Optional['Table']:
+        """
+        세션에서 데이터 조회 (sync 버전).
+        
+        Note: 락 없이 동작합니다. 동기 컨텍스트에서만 사용하세요.
+        """
+        session_data = cls._sessions.get(session_id, {})
+        entry = session_data.get(data_id)
+        
+        if entry is None:
+            return None
+        
+        # 만료 체크
+        if time.time() > entry["expires_at"]:
+            logger.info(f"Data expired: session={session_id}, id={data_id}")
+            del session_data[data_id]
+            return None
+        
+        return entry.get("data")
+    
+    @classmethod
+    async def get_metadata(cls, session_id: str, data_id: str) -> Optional[dict]:
+        """데이터의 메타데이터 조회 (async)."""
+        async with cls._get_lock():
             session_data = cls._sessions.get(session_id, {})
             entry = session_data.get(data_id)
             
@@ -119,9 +278,9 @@ class DataSessionManager:
             return entry.get("metadata")
     
     @classmethod
-    def cleanup(cls, session_id: str) -> int:
+    async def cleanup(cls, session_id: str) -> int:
         """
-        세션의 모든 데이터 삭제.
+        세션의 모든 데이터 삭제 (async).
         
         Args:
             session_id: 삭제할 세션 ID
@@ -129,7 +288,7 @@ class DataSessionManager:
         Returns:
             삭제된 데이터 수
         """
-        with cls._lock:
+        async with cls._get_lock():
             if session_id in cls._sessions:
                 count = len(cls._sessions[session_id])
                 del cls._sessions[session_id]
@@ -138,14 +297,14 @@ class DataSessionManager:
             return 0
     
     @classmethod
-    def cleanup_expired(cls) -> int:
+    async def cleanup_expired(cls) -> int:
         """
-        모든 세션에서 만료된 데이터 삭제.
+        모든 세션에서 만료된 데이터 삭제 (async).
         
         Returns:
             삭제된 데이터 수
         """
-        with cls._lock:
+        async with cls._get_lock():
             now = time.time()
             count = 0
             
@@ -170,19 +329,28 @@ class DataSessionManager:
             return count
     
     @classmethod
-    def get_stats(cls) -> dict:
+    async def get_stats(cls) -> dict:
         """
-        세션 통계 조회.
+        세션 통계 조회 (async).
         
         Returns:
             {"sessions": 세션 수, "total_items": 총 데이터 수}
         """
-        with cls._lock:
+        async with cls._get_lock():
             total_items = sum(len(s) for s in cls._sessions.values())
             return {
                 "sessions": len(cls._sessions),
                 "total_items": total_items
             }
+    
+    @classmethod
+    def get_stats_sync(cls) -> dict:
+        """세션 통계 조회 (sync 버전)."""
+        total_items = sum(len(s) for s in cls._sessions.values())
+        return {
+            "sessions": len(cls._sessions),
+            "total_items": total_items
+        }
 
 
 # =============================================================================
@@ -193,7 +361,7 @@ class DataSessionManager:
 
 def load_data(data_path: str, session_id: str = None) -> Optional['Table']:
     """
-    Load data from various path formats.
+    Load data from various path formats (sync version).
     
     Supported formats:
     - "datasets/iris" - Orange3 built-in datasets
@@ -217,9 +385,9 @@ def load_data(data_path: str, session_id: str = None) -> Optional['Table']:
         # Session-based data lookup (if session_id provided or special prefix)
         session_prefixes = ("sampler/", "kmeans/", "confusion_selection_")
         if data_path.startswith(session_prefixes):
-            # Try session-based lookup first
+            # Try session-based lookup first (sync version)
             effective_session = session_id or "default"
-            data = DataSessionManager.get(effective_session, data_path)
+            data = DataSessionManager.get_sync(effective_session, data_path)
             if data is not None:
                 logger.debug(f"Loaded from session: {effective_session}/{data_path}")
                 return data
@@ -324,9 +492,9 @@ def resolve_data_path(data_path: str) -> str:
 def save_data(data_id: str, data: 'Table', session_id: str = None, 
               ttl: int = None, metadata: dict = None) -> str:
     """
-    Save data to session storage.
+    Save data to session storage (sync version).
     
-    This is a convenience wrapper around DataSessionManager.store.
+    This is a convenience wrapper around DataSessionManager.store_sync.
     
     Args:
         data_id: 데이터 ID (예: "confusion_selection_xxx")
@@ -342,5 +510,28 @@ def save_data(data_id: str, data: 'Table', session_id: str = None,
     if session_id is None:
         session_id = "default"
     
-    return DataSessionManager.store(session_id, data_id, data, ttl, metadata)
+    return DataSessionManager.store_sync(session_id, data_id, data, ttl, metadata)
+
+
+async def save_data_async(data_id: str, data: 'Table', session_id: str = None, 
+                          ttl: int = None, metadata: dict = None) -> str:
+    """
+    Save data to session storage (async version).
+    
+    This is a convenience wrapper around DataSessionManager.store.
+    
+    Args:
+        data_id: 데이터 ID (예: "confusion_selection_xxx")
+        data: Orange.data.Table 객체
+        session_id: 세션 ID (None이면 기본 세션 사용)
+        ttl: Time-To-Live (초)
+        metadata: 추가 메타데이터
+        
+    Returns:
+        저장된 데이터의 전체 경로 (data_id)
+    """
+    if session_id is None:
+        session_id = "default"
+    
+    return await DataSessionManager.store(session_id, data_id, data, ttl, metadata)
 
