@@ -162,6 +162,8 @@ async def get_task_status(task_id: str) -> Optional[Dict[str, Any]]:
             "task_name": task.task_name,
             "status": task.status,
             "priority": task.priority,
+            "progress": task.progress,
+            "progress_message": task.progress_message,
             "result": json.loads(task.result) if task.result else None,
             "error": task.error,
             "retry_count": task.retry_count,
@@ -171,6 +173,82 @@ async def get_task_status(task_id: str) -> Optional[Dict[str, Any]]:
             "started_at": task.started_at.isoformat() if task.started_at else None,
             "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         }
+
+
+async def update_task_progress(
+    task_id: str, 
+    progress: float, 
+    message: str = None
+) -> bool:
+    """
+    태스크 진행률 업데이트.
+    
+    Args:
+        task_id: 태스크 ID
+        progress: 진행률 (0.0 ~ 100.0)
+        message: 진행 상태 메시지 (선택)
+        
+    Returns:
+        성공 여부
+    """
+    async with async_session_maker() as session:
+        values = {"progress": progress}
+        if message is not None:
+            values["progress_message"] = message
+        
+        result = await session.execute(
+            update(TaskQueueDB)
+            .where(TaskQueueDB.id == task_id)
+            .values(**values)
+        )
+        await session.commit()
+        
+        if result.rowcount > 0:
+            logger.debug(f"Task progress updated: {task_id} -> {progress}%")
+            # 진행률 변경 시 WebSocket으로 알림
+            await _notify_progress(task_id, progress, message)
+            return True
+        return False
+
+
+# WebSocket 알림 콜백 (외부에서 설정)
+_progress_callback: Optional[Callable] = None
+_completion_callback: Optional[Callable] = None
+
+
+def set_progress_callback(callback: Callable):
+    """진행률 알림 콜백 설정."""
+    global _progress_callback
+    _progress_callback = callback
+
+
+def set_completion_callback(callback: Callable):
+    """완료 알림 콜백 설정."""
+    global _completion_callback
+    _completion_callback = callback
+
+
+async def _notify_progress(task_id: str, progress: float, message: str = None):
+    """진행률 변경 알림."""
+    if _progress_callback:
+        try:
+            await _progress_callback(task_id, progress, message)
+        except Exception as e:
+            logger.warning(f"Progress callback error: {e}")
+
+
+async def _notify_completion(
+    task_id: str, 
+    status: str, 
+    result: Any = None, 
+    error: str = None
+):
+    """완료/실패 알림."""
+    if _completion_callback:
+        try:
+            await _completion_callback(task_id, status, result, error)
+        except Exception as e:
+            logger.warning(f"Completion callback error: {e}")
 
 
 async def list_tasks(
@@ -312,12 +390,17 @@ async def complete_task(task_id: str, result: Any = None):
             .where(TaskQueueDB.id == task_id)
             .values(
                 status=TaskStatus.COMPLETED,
+                progress=100.0,
+                progress_message="완료",
                 result=json.dumps(result) if result is not None else None,
                 completed_at=datetime.utcnow()
             )
         )
         await session.commit()
     logger.info(f"Task completed: {task_id}")
+    
+    # 완료 알림 전송
+    await _notify_completion(task_id, TaskStatus.COMPLETED, result)
 
 
 async def fail_task(task_id: str, error: str, retry: bool = True):
@@ -329,6 +412,7 @@ async def fail_task(task_id: str, error: str, retry: bool = True):
         error: 에러 메시지
         retry: 재시도 여부
     """
+    final_status = None
     async with async_session_maker() as session:
         result = await session.execute(
             select(TaskQueueDB).where(TaskQueueDB.id == task_id)
@@ -345,6 +429,8 @@ async def fail_task(task_id: str, error: str, retry: bool = True):
             task.status = TaskStatus.PENDING
             task.started_at = None
             task.worker_id = None
+            task.progress = 0.0
+            task.progress_message = f"재시도 {task.retry_count}/{task.max_retries}"
             logger.warning(
                 f"Task retry ({task.retry_count}/{task.max_retries}): {task_id}"
             )
@@ -353,9 +439,15 @@ async def fail_task(task_id: str, error: str, retry: bool = True):
             task.status = TaskStatus.FAILED
             task.error = error
             task.completed_at = datetime.utcnow()
+            task.progress_message = "실패"
+            final_status = TaskStatus.FAILED
             logger.error(f"Task failed: {task_id} - {error}")
         
         await session.commit()
+    
+    # 최종 실패 시 알림
+    if final_status:
+        await _notify_completion(task_id, final_status, None, error)
 
 
 async def cleanup_stale_tasks(timeout_minutes: int = 30) -> int:

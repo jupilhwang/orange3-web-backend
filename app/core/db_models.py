@@ -61,6 +61,10 @@ class TaskQueueDB(Base):
     )
     priority: Mapped[int] = mapped_column(Integer, default=TaskPriority.NORMAL, nullable=False)
     
+    # 진행률 (0.0 ~ 100.0, -1은 미정)
+    progress: Mapped[float] = mapped_column(Float, default=-1.0, nullable=False)
+    progress_message: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    
     # 결과
     result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

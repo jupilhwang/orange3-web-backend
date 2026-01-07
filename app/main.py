@@ -76,7 +76,7 @@ from .core.models import (
 )
 # Managers
 from .core import TenantManager, get_current_tenant
-from .websocket_manager import WebSocketManager
+from .websocket_manager import TaskWebSocketManager, task_ws_manager
 
 # OpenTelemetry
 try:
@@ -135,7 +135,7 @@ from .routes import (
 # ============================================================================
 
 tenant_manager = TenantManager()
-websocket_manager = WebSocketManager()
+# Task WebSocket 매니저는 websocket_manager.py에서 전역 인스턴스 사용
 
 # Widget registry (singleton, read-only after initialization)
 _registry: Optional[Any] = None
@@ -217,7 +217,7 @@ async def lifespan(fastapi_app: FastAPI):
     
     # Setup workflow router dependencies
     set_registry_getter(get_registry)
-    set_websocket_manager(websocket_manager)
+    set_websocket_manager(task_ws_manager)
     
     # Setup widget registry router dependencies
     set_widget_registry_getter(get_registry)
@@ -227,13 +227,44 @@ async def lifespan(fastapi_app: FastAPI):
     # Start Task Queue Worker
     task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
     if task_worker_enabled:
-        from .core.task_queue import start_worker, cleanup_stale_tasks
+        from .core.task_queue import (
+            start_worker, cleanup_stale_tasks,
+            set_progress_callback, set_completion_callback
+        )
         # Import tasks to register them
         import app.tasks  # noqa: F401
         
+        # Setup WebSocket callbacks for task progress/completion
+        async def on_progress(task_id: str, progress: float, message: str = None):
+            # Get tenant_id from task
+            from .core.task_queue import get_task_status
+            task_info = await get_task_status(task_id)
+            if task_info:
+                await task_ws_manager.send_progress(
+                    task_id, 
+                    task_info["tenant_id"],
+                    progress, 
+                    message
+                )
+        
+        async def on_completion(task_id: str, status: str, result=None, error=None):
+            from .core.task_queue import get_task_status
+            task_info = await get_task_status(task_id)
+            if task_info:
+                await task_ws_manager.send_completion(
+                    task_id,
+                    task_info["tenant_id"],
+                    status,
+                    result,
+                    error
+                )
+        
+        set_progress_callback(on_progress)
+        set_completion_callback(on_completion)
+        
         await start_worker(poll_interval=1.0)
         await cleanup_stale_tasks(timeout_minutes=30)
-        print("\n📋 Task Queue worker started")
+        print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
     
     # Register with Frontend Load Balancer(s)
     if lb_enabled:
@@ -459,6 +490,65 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 async def liveness_check():
     """Liveness probe - checks if service is alive."""
     return {"status": "alive"}
+
+
+# ============================================================================
+# Task Progress WebSocket
+# ============================================================================
+
+@app.websocket("/ws/tasks/{tenant_id}")
+async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str):
+    """
+    Task 진행률 및 완료 알림 WebSocket 엔드포인트.
+    
+    클라이언트는 연결 후 특정 task_id를 구독할 수 있습니다:
+    - {"action": "subscribe", "task_id": "..."} - 특정 Task 구독
+    - {"action": "subscribe", "task_id": "*"} - 모든 Task 구독
+    - {"action": "unsubscribe", "task_id": "..."} - 구독 해제
+    
+    서버는 다음 메시지를 전송합니다:
+    - {"type": "task_progress", "task_id": "...", "progress": 50.0, "message": "..."}
+    - {"type": "task_completed", "task_id": "...", "status": "completed", "result": {...}}
+    - {"type": "task_completed", "task_id": "...", "status": "failed", "error": "..."}
+    """
+    await task_ws_manager.connect(websocket, tenant_id)
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            action = data.get("action")
+            task_id = data.get("task_id")
+            
+            if action == "subscribe" and task_id:
+                task_ws_manager.subscribe(websocket, task_id)
+                await websocket.send_json({
+                    "type": "subscribed",
+                    "task_id": task_id
+                })
+            elif action == "unsubscribe" and task_id:
+                task_ws_manager.unsubscribe(websocket, task_id)
+                await websocket.send_json({
+                    "type": "unsubscribed",
+                    "task_id": task_id
+                })
+            elif action == "ping":
+                await websocket.send_json({"type": "pong"})
+                
+    except WebSocketDisconnect:
+        task_ws_manager.disconnect(websocket, tenant_id)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        task_ws_manager.disconnect(websocket, tenant_id)
+
+
+# WebSocket 연결 수 조회 엔드포인트
+@app.get("/internal/ws-stats")
+async def get_websocket_stats():
+    """WebSocket 연결 통계."""
+    return {
+        "total_connections": task_ws_manager.get_connection_count(),
+        "status": "ok"
+    }
 
 
 # ============================================================================
