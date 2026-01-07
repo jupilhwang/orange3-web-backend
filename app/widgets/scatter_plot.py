@@ -211,12 +211,12 @@ async def get_scatter_plot_data(
                 "index": i
             }
             
-            # Add class info
+            # Add class info (using "classValue" for frontend compatibility)
             if color_var and color_col is not None:
                 class_idx = int(color_col[i]) if not np.isnan(color_col[i]) else 0
                 if class_names and class_idx < len(class_names):
                     cls_name = class_names[class_idx]
-                    point["class"] = cls_name
+                    point["classValue"] = cls_name  # Changed from "class" to "classValue"
                     point["color"] = class_colors.get(cls_name, colors[0])
             
             # Add range data (all numeric variable values for error bars)

@@ -160,7 +160,7 @@ def get_registry():
 # ============================================================================
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(fastapi_app: FastAPI):
     """Application lifespan manager."""
     import httpx
     
@@ -182,7 +182,7 @@ async def lifespan(app: FastAPI):
                 enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
                 log_level=os.getenv("LOG_LEVEL", "INFO"),
             )
-            init_telemetry(app, config)
+            init_telemetry(fastapi_app, config)
             print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
     
     # Load balancer configuration
@@ -254,23 +254,23 @@ async def lifespan(app: FastAPI):
                     print(f"   ✗ Could not register with {frontend_url}: {e}")
     
     # Store registered frontends in app state for cleanup
-    app.state.registered_frontends = registered_frontends
-    app.state.backend_url = backend_url
-    app.state.lb_enabled = lb_enabled
+    fastapi_app.state.registered_frontends = registered_frontends
+    fastapi_app.state.backend_url = backend_url
+    fastapi_app.state.lb_enabled = lb_enabled
     
     print("=" * 60)
     
     yield
     
     # Cleanup - Deregister from Load Balancer(s)
-    if app.state.lb_enabled and app.state.registered_frontends:
-        print(f"\n⚖️  Deregistering from Load Balancer ({len(app.state.registered_frontends)} frontend(s))...")
+    if fastapi_app.state.lb_enabled and fastapi_app.state.registered_frontends:
+        print(f"\n⚖️  Deregistering from Load Balancer ({len(fastapi_app.state.registered_frontends)} frontend(s))...")
         async with httpx.AsyncClient(timeout=3.0) as client:
-            for frontend_url in app.state.registered_frontends:
+            for frontend_url in fastapi_app.state.registered_frontends:
                 try:
                     await client.post(
                         f"{frontend_url}/internal/deregister",
-                        json={"url": app.state.backend_url}
+                        json={"url": fastapi_app.state.backend_url}
                     )
                     print(f"   ✓ Deregistered from: {frontend_url}")
                 except Exception as e:
@@ -596,9 +596,20 @@ def get_mock_data_info(path: str):
 @api_v1.get("/data/load", tags=["Data"])
 async def load_data_from_path(
     path: str,
-    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID")
+    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
+    offset: int = 0,
+    limit: Optional[int] = None
 ):
-    """Load data from a local file path or file ID."""
+    """Load data from a local file path or file ID.
+    
+    [BE-PERF-001] Pagination support added for large datasets.
+    
+    Args:
+        path: File path or file ID (file:{uuid})
+        x_tenant_id: Tenant ID header
+        offset: Starting row index (default: 0)
+        limit: Maximum number of rows to return (default: None = all rows)
+    """
     import tempfile
     from .core.file_storage import get_file, get_file_metadata
     
@@ -716,11 +727,47 @@ async def load_data_from_path(
         else:
             display_name = data.name or path.split("/")[-1].split(":")[-1]
         
-        return {
+        # [BE-PERF-001] Apply pagination if specified
+        total_rows = len(data)
+        paginated_data = None
+        pagination = None
+        
+        if limit is not None and limit > 0:
+            # Return paginated data rows
+            end_idx = min(offset + limit, total_rows)
+            paginated_rows = data[offset:end_idx]
+            
+            # Convert to list of lists for JSON serialization
+            paginated_data = []
+            for row in paginated_rows:
+                row_data = []
+                # Features
+                for val in row:
+                    if hasattr(val, 'is_nan') and val.is_nan():
+                        row_data.append(None)
+                    else:
+                        row_data.append(float(val) if not isinstance(val, str) else val)
+                # Class
+                if data.domain.class_var:
+                    class_val = row.get_class()
+                    if hasattr(class_val, 'is_nan') and class_val.is_nan():
+                        row_data.append(None)
+                    else:
+                        row_data.append(str(class_val))
+                paginated_data.append(row_data)
+            
+            pagination = {
+                "offset": offset,
+                "limit": limit,
+                "total": total_rows,
+                "hasMore": end_idx < total_rows
+            }
+        
+        response = {
             "name": display_name,
             "description": "",
             "path": path,  # Return original path for reference
-            "instances": len(data),
+            "instances": total_rows,
             "features": len(data.domain.attributes),
             "missingValues": data.has_missing(),
             "classType": "Classification" if data.domain.class_var and not data.domain.class_var.is_continuous else "Regression" if data.domain.class_var else "None",
@@ -728,6 +775,12 @@ async def load_data_from_path(
             "metaAttributes": len(data.domain.metas),
             "columns": columns
         }
+        
+        if pagination:
+            response["data"] = paginated_data
+            response["pagination"] = pagination
+        
+        return response
     except Exception as e:
         logger.error(f"Failed to load data from {actual_path}: {e}")
         # Fallback to mock data on error
