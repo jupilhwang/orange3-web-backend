@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Header
 from pydantic import BaseModel
 
-from .text_mining_utils import (
+from app.core.text_mining_utils import (
     ORANGE_TEXT_AVAILABLE, HAS_NGRAMS, HAS_POS_TAGGER, HAS_UDPIPE,
     get_cache_item, set_cache_item
 )

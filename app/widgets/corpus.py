@@ -19,7 +19,7 @@ from typing import List, Optional, Dict
 from fastapi import APIRouter, HTTPException, Header, UploadFile, File
 from pydantic import BaseModel
 
-from .text_mining_utils import (
+from app.core.text_mining_utils import (
     ORANGE_TEXT_AVAILABLE, get_text_cache, set_cache_item, get_cache_item
 )
 from ..core.file_storage import (
@@ -120,7 +120,7 @@ async def load_corpus(
         
         # Option 1: Load from Data input (Table)
         if request.data_path:
-            from app.widgets.data_utils import load_data
+            from app.core.data_utils import load_data
             table = load_data(request.data_path)
             
             if table is None:

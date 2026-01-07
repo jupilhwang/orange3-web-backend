@@ -20,6 +20,73 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
+class TaskStatus:
+    """Task status constants."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TaskPriority:
+    """Task priority constants."""
+    LOW = 0
+    NORMAL = 5
+    HIGH = 10
+    CRITICAL = 20
+
+
+class TaskQueueDB(Base):
+    """
+    DB 독립적인 Task Queue 모델.
+    PostgreSQL, MySQL, SQLite, Oracle 모두 지원.
+    """
+    __tablename__ = "task_queue"
+    
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    
+    # Task 정보
+    task_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    task_args: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    task_kwargs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    
+    # 상태
+    status: Mapped[str] = mapped_column(
+        String(20), 
+        default=TaskStatus.PENDING,
+        nullable=False,
+        index=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=TaskPriority.NORMAL, nullable=False)
+    
+    # 결과
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # 재시도
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    
+    # 시간
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # 워커 정보
+    worker_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    
+    # 인덱스
+    __table_args__ = (
+        Index("idx_task_status_priority", "status", "priority"),
+        Index("idx_task_tenant_status", "tenant_id", "status"),
+    )
+    
+    def __repr__(self):
+        return f"<Task(id={self.id}, name={self.task_name}, status={self.status})>"
+
+
 class FileStorageDB(Base):
     """
     File storage database model.

@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
-from .data_utils import load_data
+from app.core.data_utils import load_data
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ async def evaluate_models(
     
     try:
         # Load data using common utility
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         logger.info(f"Loading Test and Score data from: {request.data_path} (session: {x_session_id})")
         data = load_data(request.data_path, session_id=x_session_id)
         

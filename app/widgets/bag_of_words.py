@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Header
 from pydantic import BaseModel
 
-from .text_mining_utils import (
+from app.core.text_mining_utils import (
     ORANGE_TEXT_AVAILABLE, get_cache_item, set_cache_item
 )
 

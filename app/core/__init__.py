@@ -6,6 +6,9 @@ Core infrastructure modules for Orange3 Web Backend.
 - locks: Async lock utilities
 - tenant: Multi-tenant management
 - file_storage: File storage abstraction (filesystem/database)
+- task_queue: DB-based async task queue
+- data_utils: Data loading and session management utilities
+- text_mining_utils: Text mining shared utilities
 """
 
 from .config import (
@@ -62,6 +65,43 @@ from .tenant import (
     TenantManager,
     get_current_tenant,
 )
+from .task_queue import (
+    task,
+    enqueue_task,
+    get_task_status,
+    list_tasks,
+    cancel_task,
+    get_queue_stats,
+    get_registered_tasks,
+    cleanup_stale_tasks,
+    cleanup_old_tasks,
+    start_worker,
+    stop_worker,
+    TaskWorker,
+)
+from .db_models import (
+    TaskQueueDB,
+    TaskStatus,
+    TaskPriority,
+)
+from .data_utils import (
+    load_data,
+    save_data,
+    save_data_async,
+    resolve_data_path,
+    DataSessionManager,
+    run_in_process,
+    run_in_thread,
+    shutdown_executors,
+    ORANGE_AVAILABLE as DATA_ORANGE_AVAILABLE,
+)
+from .text_mining_utils import (
+    get_text_cache,
+    set_cache_item,
+    get_cache_item,
+    delete_cache_item,
+    ORANGE_TEXT_AVAILABLE,
+)
 
 __all__ = [
     # config
@@ -112,5 +152,37 @@ __all__ = [
     # tenant
     "TenantManager",
     "get_current_tenant",
+    # task_queue
+    "task",
+    "enqueue_task",
+    "get_task_status",
+    "list_tasks",
+    "cancel_task",
+    "get_queue_stats",
+    "get_registered_tasks",
+    "cleanup_stale_tasks",
+    "cleanup_old_tasks",
+    "start_worker",
+    "stop_worker",
+    "TaskWorker",
+    "TaskQueueDB",
+    "TaskStatus",
+    "TaskPriority",
+    # data_utils
+    "load_data",
+    "save_data",
+    "save_data_async",
+    "resolve_data_path",
+    "DataSessionManager",
+    "run_in_process",
+    "run_in_thread",
+    "shutdown_executors",
+    "DATA_ORANGE_AVAILABLE",
+    # text_mining_utils
+    "get_text_cache",
+    "set_cache_item",
+    "get_cache_item",
+    "delete_cache_item",
+    "ORANGE_TEXT_AVAILABLE",
 ]
 

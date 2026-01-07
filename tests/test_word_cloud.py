@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 # Import the router
 from app.widgets.word_cloud import router
-from app.widgets.text_mining_utils import set_cache_item, get_cache_item, delete_cache_item
+from app.core.text_mining_utils import set_cache_item, get_cache_item, delete_cache_item
 
 # Create a test client
 from fastapi import FastAPI

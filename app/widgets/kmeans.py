@@ -125,7 +125,7 @@ async def cluster_kmeans(
             )
         
         # Load data using common utility (supports sampler, kmeans, uploads, datasets)
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         data = load_data(request.data_path, session_id=x_session_id)
         logger.debug(f"[k-Means] Loading data from {request.data_path} with session_id={x_session_id}")
         
@@ -223,7 +223,7 @@ async def cluster_kmeans(
         cluster_id = str(uuid.uuid4())[:8]
         
         # Store result in session-based storage (preferred) or legacy storage
-        from .data_utils import DataSessionManager
+        from app.core.data_utils import DataSessionManager
         
         data_path = f"kmeans/{cluster_id}"
         if x_session_id:

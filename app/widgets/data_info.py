@@ -80,7 +80,7 @@ async def _get_data_info(
     """
     try:
         import numpy as np
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         logger.info(f"Loading data info from: {data_path} (session: {session_id}, preview: {include_preview})")
         data = load_data(data_path, session_id=session_id)

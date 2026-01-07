@@ -50,7 +50,7 @@ async def get_barplot_data(
     try:
         from Orange.data import Table
         import numpy as np
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         # Load dataset (supports datasets, uploads, kmeans results)
         dataset_path = request.dataset_path

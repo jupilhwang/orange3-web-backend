@@ -52,7 +52,7 @@ async def get_scatter_plot_data(
     try:
         from Orange.data import Table
         import numpy as np
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         # Load data (supports datasets, uploads, kmeans results)
         logger.info(f"Loading scatter plot data from: {request.data_path} (session: {x_session_id})")
@@ -298,7 +298,7 @@ async def select_scatter_plot_data(
         raise HTTPException(status_code=501, detail="Orange3 not available")
     
     try:
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         logger.info(f"Loading scatter plot selection from: {request.data_path} (session: {x_session_id})")
         data = load_data(request.data_path, session_id=x_session_id)
@@ -337,7 +337,7 @@ async def find_informative_projections(
         raise HTTPException(status_code=501, detail="Orange3 not available")
     
     try:
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         import numpy as np
         
         logger.info(f"Finding informative projections for: {request.path}")

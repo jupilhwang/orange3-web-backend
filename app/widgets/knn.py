@@ -91,7 +91,7 @@ async def train_knn(
             )
         
         # Load data using common utility (supports sampler, kmeans, uploads, datasets)
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         logger.info(f"Loading kNN data from: {request.data_path} (session: {x_session_id})")
         data = load_data(request.data_path, session_id=x_session_id)
         
@@ -194,7 +194,7 @@ async def predict_knn(
         model = _knn_models[model_id]
         
         # Load data using common utility
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         data = load_data(data_path, session_id=x_session_id)
         
         if data is None:

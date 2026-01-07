@@ -7,11 +7,18 @@ from typing import AsyncGenerator, Generator
 from httpx import AsyncClient, ASGITransport
 import os
 import sys
+import tempfile
+
+# 테스트용 SQLite DB 설정 (import 전에 환경변수 설정)
+_test_db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_file.name}"
+os.environ["TASK_WORKER_ENABLED"] = "false"  # 테스트 시 워커 비활성화
 
 # Add app to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.main import app
+from app.core.database import init_db, close_db
 
 
 @pytest.fixture(scope="session")
@@ -20,6 +27,19 @@ def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def setup_test_db():
+    """테스트 DB 초기화."""
+    await init_db()
+    yield
+    await close_db()
+    # 테스트 DB 파일 삭제
+    try:
+        os.unlink(_test_db_file.name)
+    except Exception:
+        pass
 
 
 @pytest.fixture

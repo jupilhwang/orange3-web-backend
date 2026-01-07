@@ -57,7 +57,7 @@ async def select_rows(
         from Orange.data import Table, ContinuousVariable, DiscreteVariable, StringVariable
         import Orange.data.filter as data_filter
         from Orange.data.filter import FilterContinuous, FilterString
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         data_source = request.data_source
         

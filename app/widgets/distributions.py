@@ -56,7 +56,7 @@ async def get_distributions(
         from scipy.stats import norm, rayleigh, beta, gamma, pareto, expon
         
         # Load data (supports datasets, uploads, kmeans results)
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         data = None
         if request.data_path:

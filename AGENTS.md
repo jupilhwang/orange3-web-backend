@@ -102,23 +102,29 @@ backend/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI 앱 진입점
 │   ├── routes.py            # 워크플로우 & 위젯 레지스트리 라우트
+│   ├── tasks.py             # 비동기 태스크 정의
 │   ├── orange_adapter.py    # Orange3 래퍼
 │   ├── websocket_manager.py # WebSocket 관리
 │   ├── core/
 │   │   ├── config.py        # 설정 관리
 │   │   ├── database.py      # DB 연결
-│   │   ├── db_models.py     # SQLAlchemy 모델
+│   │   ├── db_models.py     # SQLAlchemy 모델 (Task Queue 포함)
 │   │   ├── models.py        # Pydantic 모델
 │   │   ├── tenant.py        # 테넌트 관리
 │   │   ├── locks.py         # 비동기 락
 │   │   ├── file_storage.py  # 파일 저장소
+│   │   ├── task_queue.py    # DB 기반 Task Queue
+│   │   ├── task_api.py      # Task Queue API 라우터
+│   │   ├── data_utils.py    # 데이터 유틸리티
+│   │   ├── text_mining_utils.py # 텍스트 마이닝 유틸리티
 │   │   └── telemetry.py     # OpenTelemetry
 │   └── widgets/
-│       ├── __init__.py      # 라우터 export
-│       ├── data_utils.py    # 데이터 유틸리티
+│       ├── __init__.py      # 위젯 라우터 export
 │       ├── scatter_plot.py  # 시각화 위젯
 │       ├── datasets.py      # 데이터셋 위젯
 │       ├── knn.py           # ML 모델 위젯
+│       ├── kmeans.py        # K-Means 클러스터링
+│       ├── corpus.py        # 텍스트 코퍼스
 │       └── ...              # 기타 위젯들
 ├── tests/
 │   ├── conftest.py          # pytest fixtures

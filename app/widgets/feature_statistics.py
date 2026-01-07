@@ -234,7 +234,7 @@ async def compute_feature_statistics(
     """
     try:
         from Orange.data import Table, StringVariable
-        from app.widgets.data_utils import load_data
+        from app.core.data_utils import load_data
         
         # 데이터 로드
         data = load_data(request.data_path, session_id=x_session_id)
@@ -401,7 +401,7 @@ async def get_reduced_data(
     """
     try:
         from Orange.data import Table
-        from app.widgets.data_utils import load_data, DataSessionManager
+        from app.core.data_utils import load_data, DataSessionManager
         
         # 데이터 로드
         data = load_data(request.data_path, session_id=x_session_id)

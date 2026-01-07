@@ -116,6 +116,7 @@ from .widgets import (
     data_info_router,
     feature_statistics_router,
 )
+from .core.task_api import router as task_api_router
 from .core.config import get_upload_dir, get_config
 from .routes import (
     workflow_router,
@@ -223,6 +224,17 @@ async def lifespan(app: FastAPI):
     
     print("\n🔒 Async locks enabled for concurrent access protection")
     
+    # Start Task Queue Worker
+    task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
+    if task_worker_enabled:
+        from .core.task_queue import start_worker, cleanup_stale_tasks
+        # Import tasks to register them
+        import app.tasks  # noqa: F401
+        
+        await start_worker(poll_interval=1.0)
+        await cleanup_stale_tasks(timeout_minutes=30)
+        print("\n📋 Task Queue worker started")
+    
     # Register with Frontend Load Balancer(s)
     if lb_enabled:
         print(f"\n⚖️  Load Balancer registration ({len(frontend_urls)} frontend(s))...")
@@ -266,8 +278,14 @@ async def lifespan(app: FastAPI):
     
     print("\nShutting down Orange3 Web Backend...")
     
+    # Stop Task Queue Worker
+    if task_worker_enabled:
+        from .core.task_queue import stop_worker
+        await stop_worker()
+        print("Task Queue worker stopped.")
+    
     # Shutdown CPU/IO executor pools
-    from .widgets.data_utils import shutdown_executors
+    from .core.data_utils import shutdown_executors
     shutdown_executors()
     print("Executor pools shutdown.")
     
@@ -601,12 +619,37 @@ async def load_data_from_path(
         metadata = await get_file_metadata(file_id, x_tenant_id)
         if not metadata:
             logger.warning(f"File not found: {file_id}")
-            return get_mock_data_info(path)
+            # Return error info instead of mock data
+            return {
+                "name": "File Not Found",
+                "description": f"파일을 찾을 수 없습니다. 파일을 다시 업로드해주세요.",
+                "path": path,
+                "instances": 0,
+                "features": 0,
+                "missingValues": False,
+                "classType": "None",
+                "classValues": None,
+                "metaAttributes": 0,
+                "columns": [],
+                "error": f"File not found: {file_id}"
+            }
         
         content = await get_file(file_id, x_tenant_id)
         if not content:
             logger.warning(f"File content not found: {file_id}")
-            return get_mock_data_info(path)
+            return {
+                "name": metadata.original_filename or metadata.filename,
+                "description": "파일 내용을 읽을 수 없습니다.",
+                "path": path,
+                "instances": 0,
+                "features": 0,
+                "missingValues": False,
+                "classType": "None",
+                "classValues": None,
+                "metaAttributes": 0,
+                "columns": [],
+                "error": f"File content not found: {file_id}"
+            }
         
         # Write to temp file for Orange3 to load
         suffix = Path(metadata.filename).suffix or '.tab'
@@ -667,7 +710,9 @@ async def load_data_from_path(
         
         # Get display name (prefer original filename from metadata)
         if path.startswith("file:") and metadata:
-            display_name = Path(metadata.filename).stem
+            # Use original_filename which stores the actual uploaded filename
+            original_name = metadata.original_filename or metadata.filename
+            display_name = Path(original_name).stem
         else:
             display_name = data.name or path.split("/")[-1].split(":")[-1]
         
@@ -808,6 +853,9 @@ api_v1.include_router(bag_of_words_router)
 api_v1.include_router(word_cloud_router)
 api_v1.include_router(data_info_router)
 api_v1.include_router(feature_statistics_router)
+
+# Include Task Queue Router
+api_v1.include_router(task_api_router)
 
 # Include Workflow Router
 api_v1.include_router(workflow_router)

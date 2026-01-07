@@ -60,7 +60,7 @@ async def train_naive_bayes(
     
     try:
         # Load data using common utility
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         logger.info(f"Loading Naive Bayes data from: {request.data_path} (session: {x_session_id})")
         data = load_data(request.data_path, session_id=x_session_id)
         

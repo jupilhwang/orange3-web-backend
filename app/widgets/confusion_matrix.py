@@ -186,7 +186,7 @@ async def select_data(
     
     try:
         from .test_and_score import _test_results
-        from .data_utils import save_data
+        from app.core.data_utils import save_data
         
         results_data = _test_results.get(request.results_id)
         if not results_data:

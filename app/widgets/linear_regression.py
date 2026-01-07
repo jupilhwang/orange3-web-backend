@@ -95,7 +95,7 @@ async def train_linear_regression(
             )
         
         # Load data using common utility
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         logger.info(f"Loading Linear Regression data from: {request.data_path} (session: {x_session_id})")
         data = load_data(request.data_path, session_id=x_session_id)
         
@@ -239,7 +239,7 @@ async def predict_linear_regression(
         model = _linear_models[model_id]
         
         # Load data using common utility
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         data = load_data(data_path, session_id=x_session_id)
         
         if data is None:

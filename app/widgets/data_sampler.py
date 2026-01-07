@@ -62,7 +62,7 @@ async def sample_data(
     try:
         import numpy as np
         import math
-        from .data_utils import load_data
+        from app.core.data_utils import load_data
         
         # Constants
         RANDOM_SEED = 42
@@ -134,7 +134,7 @@ async def sample_data(
         remaining_id = str(uuid.uuid4())[:8]
         
         # Store results using session-based storage if available
-        from .data_utils import DataSessionManager
+        from app.core.data_utils import DataSessionManager
         
         sample_path = f"sampler/sample_{sample_id}" if sample_data is not None else None
         remaining_path = f"sampler/remaining_{remaining_id}" if remaining_data is not None else None
