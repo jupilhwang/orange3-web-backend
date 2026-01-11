@@ -10,6 +10,8 @@ so we only need to install Orange3.
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 import json
+import base64
+import importlib.metadata
 
 # =============================================================================
 # Orange3 Imports (includes canvas-core and widget-base as dependencies)
@@ -203,9 +205,15 @@ class OrangeRegistryAdapter:
             if ORANGE3_AVAILABLE:
                 print("Using Orange3 widget discovery...")
                 
-                discovery = WidgetDiscovery(self._registry)
-                widget_discovery(discovery)
-                self._process_registry()
+                try:
+                    # Try using WidgetDiscovery with widget_discovery function
+                    discovery = WidgetDiscovery(self._registry)
+                    widget_discovery(discovery)
+                    self._process_registry()
+                except AttributeError as ae:
+                    # Fallback: WidgetDiscovery API changed in newer Orange3 versions
+                    print(f"WidgetDiscovery API changed, using alternative method: {ae}")
+                    self._alternative_discovery()
             else:
                 print("Orange3 not available, using fallback...")
                 self._manual_discovery()
@@ -217,6 +225,10 @@ class OrangeRegistryAdapter:
             print(f"Error discovering widgets: {e}")
             import traceback
             traceback.print_exc()
+            # Use manual discovery as last resort
+            print("Using manual discovery as fallback...")
+            self._manual_discovery()
+            self._loaded = True
     
     def _process_registry(self):
         """Process the registry after discovery."""
@@ -237,6 +249,180 @@ class OrangeRegistryAdapter:
         for widget in self._registry.widgets():
             widget_dict = self._widget_to_dict(widget)
             self._widgets[widget.qualified_name] = widget_dict
+    
+    def _alternative_discovery(self):
+        """Alternative widget discovery using dynamic entry_points."""
+        try:
+            import pkgutil
+            import importlib
+            
+            # Core Orange3 widget packages
+            core_packages = [
+                ('Orange.widgets.data', 'Data'),
+                ('Orange.widgets.visualize', 'Visualize'),
+                ('Orange.widgets.model', 'Model'),
+                ('Orange.widgets.evaluate', 'Evaluate'),
+                ('Orange.widgets.unsupervised', 'Unsupervised'),
+            ]
+            
+            # Dynamically discover add-ons via entry_points
+            addon_packages = []
+            for addon in _discover_addon_entry_points():
+                # Convert path to module name
+                module_name = None
+                if 'orangecontrib' in addon['path']:
+                    # Extract module path from filesystem path
+                    parts = addon['path'].split('orangecontrib')
+                    if len(parts) > 1:
+                        subpath = parts[1].strip(os.sep).replace(os.sep, '.')
+                        module_name = f"orangecontrib.{subpath}"
+                
+                if module_name:
+                    addon_packages.append((module_name, addon['name'], addon.get('background'), addon.get('priority', 1000)))
+            
+            discovered_categories = set()
+            widget_count = 0
+            
+            # Process core packages
+            for pkg_name, category_name in core_packages:
+                try:
+                    pkg = importlib.import_module(pkg_name)
+                    pkg_path = getattr(pkg, '__path__', None)
+                    if not pkg_path:
+                        continue
+                    
+                    cat_info = {"background": CATEGORY_COLORS.get(category_name, "#808080"), "priority": CATEGORY_PRIORITIES.get(category_name, 99)}
+                    
+                    if category_name not in discovered_categories:
+                        self._categories.append({
+                            "name": category_name,
+                            "description": f"{category_name} widgets",
+                            "background": cat_info["background"],
+                            "priority": cat_info["priority"],
+                            "icon": ""
+                        })
+                        discovered_categories.add(category_name)
+                    
+                    widget_count += self._scan_package_for_widgets(pkg_name, pkg_path[0], category_name)
+                except ImportError:
+                    continue
+            
+            # Process dynamically discovered add-ons
+            for addon_info in addon_packages:
+                pkg_name, category_name = addon_info[0], addon_info[1]
+                background = addon_info[2] if len(addon_info) > 2 else None
+                priority = addon_info[3] if len(addon_info) > 3 else 1000
+                
+                try:
+                    pkg = importlib.import_module(pkg_name)
+                    pkg_path = getattr(pkg, '__path__', None)
+                    if not pkg_path:
+                        continue
+                    
+                    if category_name not in discovered_categories:
+                        self._categories.append({
+                            "name": category_name,
+                            "description": f"{category_name} widgets",
+                            "background": _normalize_color(background),
+                            "priority": priority,
+                            "icon": ""
+                        })
+                        discovered_categories.add(category_name)
+                    
+                    widget_count += self._scan_package_for_widgets(pkg_name, pkg_path[0], category_name)
+                except ImportError:
+                    continue
+            
+            print(f"Alternative discovery found {widget_count} widgets in {len(discovered_categories)} categories")
+            
+        except Exception as e:
+            print(f"Alternative discovery failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fall back to manual discovery
+            self._manual_discovery()
+    
+    def _scan_package_for_widgets(self, pkg_name: str, pkg_path: str, category_name: str) -> int:
+        """Scan a package for widgets and return count."""
+        import pkgutil
+        import importlib
+        
+        widget_count = 0
+        for importer, modname, ispkg in pkgutil.iter_modules([pkg_path]):
+            if modname.startswith('ow') or modname.startswith('OW'):
+                try:
+                    module = importlib.import_module(f"{pkg_name}.{modname}")
+                    # Find OWWidget subclasses
+                    for name, obj in vars(module).items():
+                        if (isinstance(obj, type) and 
+                            name.startswith('OW') and 
+                            hasattr(obj, 'name') and
+                            hasattr(obj, 'inputs') and
+                            hasattr(obj, 'outputs')):
+                            
+                            widget_dict = self._class_to_widget_dict(obj, category_name, pkg_name, modname, pkg_path)
+                            if widget_dict:
+                                self._widgets[widget_dict['qualified_name']] = widget_dict
+                                widget_count += 1
+                except Exception:
+                    pass  # Skip problematic modules
+        return widget_count
+    
+    def _class_to_widget_dict(self, widget_class, category_name: str, pkg_name: str, modname: str, pkg_path: str = None) -> Optional[Dict]:
+        """Convert a widget class to widget dict with Base64 icon."""
+        try:
+            name = getattr(widget_class, 'name', widget_class.__name__)
+            qualified_name = f"{pkg_name}.{modname}.{widget_class.__name__}"
+            
+            # Get inputs
+            inputs = []
+            for inp in getattr(widget_class, 'inputs', []):
+                inp_dict = {
+                    "id": getattr(inp, 'name', str(inp)),
+                    "name": getattr(inp, 'name', str(inp)),
+                    "types": [],
+                    "flags": 0,
+                    "multiple": False
+                }
+                inputs.append(inp_dict)
+            
+            # Get outputs
+            outputs = []
+            for out in getattr(widget_class, 'outputs', []):
+                out_dict = {
+                    "id": getattr(out, 'name', str(out)),
+                    "name": getattr(out, 'name', str(out)),
+                    "types": [],
+                    "flags": 0
+                }
+                outputs.append(out_dict)
+            
+            # Resolve icon path and encode as Base64
+            icon_relative = getattr(widget_class, 'icon', '')
+            icon_base64 = _DEFAULT_ICON_BASE64
+            
+            if icon_relative and pkg_path:
+                icon_full_path = os.path.join(pkg_path, icon_relative)
+                encoded = _read_icon_as_base64(icon_full_path)
+                if encoded:
+                    icon_base64 = encoded
+            
+            return {
+                "id": qualified_name,
+                "qualified_name": qualified_name,
+                "name": self.WIDGET_NAME_OVERRIDES.get(name, name),
+                "description": getattr(widget_class, 'description', '') or '',
+                "category": category_name,
+                "background": getattr(widget_class, 'background', None),
+                "icon": icon_base64,  # Base64 data URL
+                "priority": getattr(widget_class, 'priority', 0),
+                "inputs": inputs,
+                "outputs": outputs,
+                "keywords": list(getattr(widget_class, 'keywords', [])),
+                "replaces": list(getattr(widget_class, 'replaces', [])),
+            }
+        except Exception as e:
+            return None
     
     def _manual_discovery(self):
         """Manual widget discovery when Orange3 is not available."""
@@ -584,19 +770,6 @@ def _get_orange3_path_from_import() -> Optional[str]:
     return None
 
 
-def _get_orange3_text_path_from_import() -> Optional[str]:
-    """Try to get Orange3-Text widgets path."""
-    try:
-        import orangecontrib.text
-        text_dir = os.path.dirname(orangecontrib.text.__file__)
-        widgets_path = os.path.join(text_dir, 'widgets')
-        if os.path.exists(widgets_path):
-            return widgets_path
-    except ImportError:
-        pass
-    return None
-
-
 def _get_site_packages_paths() -> List[str]:
     """Get all possible site-packages paths dynamically."""
     paths = []
@@ -622,7 +795,98 @@ def _get_site_packages_paths() -> List[str]:
     return list(dict.fromkeys(paths))
 
 
-# Category colors and priorities
+# =============================================================================
+# Dynamic Add-on Discovery and Icon Utilities
+# =============================================================================
+
+def _read_icon_as_base64(icon_path: str) -> Optional[str]:
+    """Read SVG/PNG icon and return as Base64 data URL."""
+    if not icon_path or not os.path.exists(icon_path):
+        return None
+    try:
+        with open(icon_path, 'rb') as f:
+            content = f.read()
+        b64 = base64.b64encode(content).decode('utf-8')
+        
+        # Determine MIME type
+        if icon_path.lower().endswith('.svg'):
+            mime_type = 'image/svg+xml'
+        elif icon_path.lower().endswith('.png'):
+            mime_type = 'image/png'
+        else:
+            mime_type = 'image/svg+xml'  # Default to SVG
+        
+        return f"data:{mime_type};base64,{b64}"
+    except Exception:
+        return None
+
+
+def _normalize_color(color: Optional[str]) -> str:
+    """Normalize color value to hex format."""
+    if not color:
+        return "#999999"
+    
+    # Handle named colors
+    color_map = {
+        'light-blue': '#B8E0D2',
+        'lightblue': '#B8E0D2',
+        'light-green': '#93C47D',
+        'lightgreen': '#93C47D',
+        'light-yellow': '#F7F5A8',
+        'lightyellow': '#F7F5A8',
+    }
+    
+    color_lower = color.lower().strip()
+    if color_lower in color_map:
+        return color_map[color_lower]
+    
+    # Already a hex color
+    if color.startswith('#'):
+        return color
+    
+    return "#999999"
+
+
+def _discover_addon_entry_points() -> List[Dict]:
+    """Dynamically discover all Orange3 add-ons via entry_points."""
+    addons = []
+    try:
+        eps = importlib.metadata.entry_points(group='orange.widgets')
+        for ep in eps:
+            # Skip core Orange3 widgets (handled separately)
+            if ep.name == 'Orange Widgets':
+                continue
+            try:
+                module = importlib.import_module(ep.value)
+                module_path = os.path.dirname(module.__file__) if hasattr(module, '__file__') else None
+                
+                if module_path:
+                    # Extract source name from module path (e.g., 'text' from 'orangecontrib.text.widgets')
+                    parts = ep.value.split('.')
+                    source = parts[1] if len(parts) > 1 else ep.name.lower().replace(' ', '')
+                    
+                    addons.append({
+                        'name': getattr(module, 'NAME', ep.name),
+                        'path': module_path,
+                        'background': getattr(module, 'BACKGROUND', None),
+                        'priority': getattr(module, 'PRIORITY', 1000),
+                        'source': source,
+                        'entry_point_name': ep.name,
+                    })
+            except ImportError as e:
+                print(f"Warning: Could not import add-on {ep.name}: {e}")
+    except Exception as e:
+        print(f"Warning: Error discovering add-ons: {e}")
+    
+    return addons
+
+
+# Default icon as Base64 (simple gray circle SVG)
+_DEFAULT_ICON_BASE64 = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+PGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjAiIGZpbGw9IiM5OTkiLz48L3N2Zz4="
+
+
+# Category colors and priorities (for core Orange3 widgets)
+# Add-on categories are discovered dynamically via entry_points
 CATEGORY_COLORS = {
     "Data": "#FFD39F",
     "Transform": "#FF9D5E",
@@ -630,7 +894,6 @@ CATEGORY_COLORS = {
     "Model": "#FAC1D9",
     "Evaluate": "#C3F3F3",
     "Unsupervised": "#CAE1EF",
-    "Text Mining": "#B8E0D2",
 }
 
 CATEGORY_PRIORITIES = {
@@ -640,7 +903,6 @@ CATEGORY_PRIORITIES = {
     "Model": 4,
     "Evaluate": 5,
     "Unsupervised": 6,
-    "Text Mining": 7,
 }
 
 # Parent class port definitions - automatically inherited by child widgets
@@ -779,15 +1041,20 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
 
 
 class WidgetDiscovery:
-    """Discovers Orange3 widgets from the filesystem using AST parsing."""
+    """Discovers Orange3 widgets from the filesystem using AST parsing.
+    
+    Dynamically discovers all installed Orange3 add-ons via entry_points
+    and includes widget icons as Base64 data URLs.
+    """
     
     WIDGET_NAME_OVERRIDES = {
         "Column Statistics": "Feature Statistics",
     }
     
-    def __init__(self, orange3_path: Optional[str] = None, orange3_text_path: Optional[str] = None):
+    def __init__(self, orange3_path: Optional[str] = None):
         self.orange3_path = orange3_path or self._find_orange3_path()
-        self.orange3_text_path = orange3_text_path or _get_orange3_text_path_from_import()
+        # Dynamically discover all installed add-ons
+        self.addon_paths = _discover_addon_entry_points()
         self.categories: Dict[str, Dict] = {}
         self.widgets: List[Dict] = []
     
@@ -813,11 +1080,14 @@ class WidgetDiscovery:
         self.categories = {}
         self.widgets = []
         
+        # Discover core Orange3 widgets
         if self.orange3_path and os.path.exists(self.orange3_path):
             self._discover_orange3_widgets()
         
-        if self.orange3_text_path and os.path.exists(self.orange3_text_path):
-            self._discover_text_widgets()
+        # Dynamically discover all installed add-ons
+        for addon in self.addon_paths:
+            if os.path.exists(addon['path']):
+                self._discover_addon_widgets(addon)
         
         if not self.widgets:
             return {"categories": [], "widgets": [], "total": 0}
@@ -834,19 +1104,19 @@ class WidgetDiscovery:
                 continue
             
             cat_info = self._read_category_info(dir_path, subdir)
-            self._scan_widget_directory(dir_path, cat_info)
+            self._scan_widget_directory(dir_path, cat_info, source='orange3')
     
-    def _discover_text_widgets(self):
-        """Discover Orange3-Text widgets."""
+    def _discover_addon_widgets(self, addon: Dict):
+        """Discover widgets from a dynamically discovered add-on."""
         cat_info = {
-            'name': 'Text Mining',
-            'background': CATEGORY_COLORS.get('Text Mining', '#B8E0D2'),
-            'priority': CATEGORY_PRIORITIES.get('Text Mining', 7)
+            'name': addon['name'],
+            'background': _normalize_color(addon.get('background')) or CATEGORY_COLORS.get(addon['name'], '#999999'),
+            'priority': addon.get('priority', 1000)
         }
-        self._scan_widget_directory(self.orange3_text_path, cat_info, icon_prefix='text/')
+        self._scan_widget_directory(addon['path'], cat_info, source=addon['source'])
     
-    def _scan_widget_directory(self, dir_path: str, cat_info: Dict, icon_prefix: str = ''):
-        """Scan a widget directory."""
+    def _scan_widget_directory(self, dir_path: str, cat_info: Dict, source: str = 'orange3'):
+        """Scan a widget directory and extract widgets with Base64 icons."""
         for filename in sorted(os.listdir(dir_path)):
             if filename.startswith('ow') and filename.endswith('.py'):
                 filepath = os.path.join(dir_path, filename)
@@ -859,13 +1129,18 @@ class WidgetDiscovery:
                         self.categories[widget_category] = {
                             'name': widget_category,
                             'background': CATEGORY_COLORS.get(widget_category, cat_info['background']),
-                            'priority': CATEGORY_PRIORITIES.get(widget_category, 10),
+                            'priority': CATEGORY_PRIORITIES.get(widget_category, cat_info.get('priority', 10)),
                             'widgets': []
                         }
                     
-                    icon = widget_info.get('icon', 'icons/Unknown.svg')
-                    if icon_prefix and not icon.startswith('http'):
-                        icon = icon_prefix + icon.replace('icons/', '')
+                    # Resolve icon path and encode as Base64
+                    icon_relative = widget_info.get('icon', 'icons/Unknown.svg')
+                    icon_full_path = os.path.join(dir_path, icon_relative)
+                    icon_base64 = _read_icon_as_base64(icon_full_path)
+                    
+                    # Use default icon if not found
+                    if not icon_base64:
+                        icon_base64 = _DEFAULT_ICON_BASE64
                     
                     display_name = self.WIDGET_NAME_OVERRIDES.get(widget_info['name'], widget_info['name'])
                     widget_id = self._generate_widget_id(widget_info['name'])
@@ -875,13 +1150,13 @@ class WidgetDiscovery:
                         'id': widget_id,
                         'name': display_name,
                         'description': widget_info.get('description', ''),
-                        'icon': icon,
+                        'icon': icon_base64,  # Base64 data URL
                         'category': widget_category,
                         'priority': widget_info.get('priority', 9999),
                         'inputs': widget_info.get('inputs', []),
                         'outputs': widget_info.get('outputs', []),
                         'keywords': widget_info.get('keywords', []),
-                        'source': 'orange3-text' if icon_prefix else 'orange3',
+                        'source': source,
                     }
                     
                     self.categories[widget_category]['widgets'].append(widget_data)

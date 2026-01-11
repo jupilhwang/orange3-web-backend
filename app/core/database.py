@@ -73,6 +73,8 @@ class Base(DeclarativeBase):
     pass
 
 
+
+
 async def init_db():
     """Initialize database - create all tables"""
     async with engine.begin() as conn:
@@ -82,6 +84,7 @@ async def init_db():
         if "sqlite" in DATABASE_URL:
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA busy_timeout=5000"))
+
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -100,5 +103,3 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def close_db():
     """Close database connections"""
     await engine.dispose()
-
-

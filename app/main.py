@@ -809,6 +809,39 @@ async def load_data_from_path(
                 "values": ""
             })
         
+        # --- Phase 4: Load metadata overrides ---
+        from .core.config import get_tenant_upload_dir
+        file_id_for_meta = path
+        if path.startswith("file:"):
+            file_id_for_meta = path.replace("file:", "")
+        elif path.startswith("uploads/"):
+            file_id_for_meta = path.replace("uploads/", "")
+            
+        upload_dir = get_tenant_upload_dir(x_tenant_id or "default")
+        metadata_path = upload_dir / f"{file_id_for_meta}.metadata.json"
+        
+        if metadata_path.exists():
+            try:
+                import json
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata_overrides = json.load(f)
+                    # We match by original index or name? Name is safer if columns haven't changed.
+                    # Metadata stores a list of columns.
+                    meta_cols = {col['name']: col for col in metadata_overrides.get('columns', [])}
+                    
+                    for col in columns:
+                        if col['name'] in meta_cols:
+                            override = meta_cols[col['name']]
+                            # Apply overrides
+                            col['type'] = override.get('type', col['type'])
+                            col['role'] = override.get('role', col['role'])
+                            # Note: name override is tricky if we use name as key, 
+                            # but original name is what we have in 'columns'
+                logger.info(f"Applied column metadata overrides from {metadata_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load metadata overrides: {e}")
+        # ----------------------------------------
+        
         # Get display name (prefer original filename from metadata)
         if path.startswith("file:") and metadata:
             # Use original_filename which stores the actual uploaded filename

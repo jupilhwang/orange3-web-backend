@@ -21,9 +21,62 @@ from ..core.file_storage import (
 )
 from ..core.config import get_tenant_upload_dir
 
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
+
+# --- Models for Phase 4: Backend Persistence ---
+class ColumnUpdate(BaseModel):
+    name: str
+    type: str
+    role: str
+    values: Optional[str] = ""
+
+class ColumnMetadataUpdate(BaseModel):
+    path: str  # File path or file ID
+    columns: List[ColumnUpdate]
+
+@router.post("/columns/save")
+async def save_column_metadata(
+    data: ColumnMetadataUpdate,
+    x_tenant_id: str = Header(default="default", alias="X-Tenant-ID")
+):
+    """
+    Save column metadata overrides for a file.
+    This enables persistent column names, types, and roles.
+    """
+    import json
+    
+    file_id = data.path
+    if file_id.startswith("file:"):
+        file_id = file_id.replace("file:", "")
+    
+    # Define metadata filename
+    # For simplicity, we store it in the tenant's upload directory as {file_id}.metadata.json
+    upload_dir = get_tenant_upload_dir(x_tenant_id)
+    if not upload_dir.exists():
+        upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    metadata_path = upload_dir / f"{file_id}.metadata.json"
+    
+    try:
+        metadata_content = {
+            "path": data.path,
+            "columns": [col.model_dump() for col in data.columns],
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata_content, f, indent=4, ensure_ascii=False)
+            
+        logger.info(f"Saved column metadata for {file_id} to {metadata_path}")
+        return {"success": True, "path": str(metadata_path)}
+    except Exception as e:
+        logger.error(f"Failed to save metadata: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save metadata: {str(e)}")
 
 # Check Orange3 availability
 try:
@@ -86,6 +139,8 @@ def _parse_with_orange3(file_path: str, filename: str) -> dict:
         logger.warning(f"Orange3 parsing failed: {e}")
         return None
 
+
+from ..core.concurrency import run_in_threadpool
 
 @router.post("/upload")
 async def upload_file(
@@ -161,14 +216,24 @@ async def upload_file(
         if ORANGE_AVAILABLE:
             if STORAGE_TYPE == 'filesystem' and stored_file.file_path:
                 # Filesystem mode: use stored file path directly
-                orange_metadata = _parse_with_orange3(stored_file.file_path, file.filename)
+                # Run CPU-bound parsing in thread pool
+                orange_metadata = await run_in_threadpool(
+                    _parse_with_orange3, 
+                    stored_file.file_path, 
+                    file.filename
+                )
             else:
                 # Database mode: create temp file for Orange3 parsing
                 with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
                     tmp.write(content)
                     tmp_path = tmp.name
                 try:
-                    orange_metadata = _parse_with_orange3(tmp_path, file.filename)
+                    # Run CPU-bound parsing in thread pool
+                    orange_metadata = await run_in_threadpool(
+                        _parse_with_orange3, 
+                        tmp_path, 
+                        file.filename
+                    )
                 finally:
                     Path(tmp_path).unlink(missing_ok=True)
         

@@ -1,102 +1,116 @@
 #!/usr/bin/env python3
 """
-Orange3-Web Backend Runner.
+Orange3-Web Backend Server Runner
 
-Reads configuration from orange3-web.properties or environment variables
-and starts the uvicorn server with the configured settings.
+설정 우선순위: CLI 옵션 > 설정 파일 > 환경 변수 > 기본값
 
-Usage:
-    python run.py                    # Use config file or env vars
-    python run.py --port 8080        # Override port
-    python run.py --workers 4        # Override workers
-    python run.py --reload           # Enable auto-reload (dev mode)
+사용법:
+    python run.py                           # 기본 설정으로 실행
+    python run.py --port 9000               # 포트 지정
+    python run.py --workers 4               # 워커 수 지정
+    python run.py --reload                  # 개발 모드 (자동 리로드)
 """
 
 import argparse
+import os
 import sys
-import uvicorn
+from pathlib import Path
 
-from app.core.config import get_config
+# 프로젝트 루트를 PYTHONPATH에 추가
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+
+def load_properties(filepath: str) -> dict:
+    """properties 파일 로드"""
+    config = {}
+    if not os.path.exists(filepath):
+        return config
+    
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '=' in line:
+                key, value = line.split('=', 1)
+                config[key.strip()] = value.strip()
+    return config
+
+
+def find_config_file() -> str | None:
+    """설정 파일 찾기"""
+    search_paths = [
+        './orange3-web-backend.properties',
+        '/etc/orange3-web/orange3-web-backend.properties',
+        os.path.expanduser('~/.orange3-web/orange3-web-backend.properties'),
+    ]
+    
+    for path in search_paths:
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def main():
-    """Main entry point."""
-    config = get_config()
+    parser = argparse.ArgumentParser(
+        description='Orange3-Web Backend Server',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python run.py                           # 기본 설정으로 실행
+    python run.py --port 9000               # 포트 지정
+    python run.py --workers 4 --port 8000   # 프로덕션 설정
+    python run.py --reload                  # 개발 모드
+        """
+    )
     
-    # Parse command line arguments (override config)
-    parser = argparse.ArgumentParser(description="Orange3-Web Backend Server")
-    parser.add_argument(
-        "--host", 
-        type=str, 
-        default=None,
-        help=f"Host to bind (default: {config.server.host})"
-    )
-    parser.add_argument(
-        "--port", 
-        type=int, 
-        default=None,
-        help=f"Port to bind (default: {config.server.port})"
-    )
-    parser.add_argument(
-        "--workers", 
-        type=int, 
-        default=None,
-        help=f"Number of worker processes (default: {config.server.workers})"
-    )
-    parser.add_argument(
-        "--reload", 
-        action="store_true",
-        default=None,
-        help="Enable auto-reload (development mode)"
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default=None,
-        choices=["critical", "error", "warning", "info", "debug", "trace"],
-        help=f"Log level (default: {config.log.level.lower()})"
-    )
+    parser.add_argument('--host', type=str, help='바인딩 호스트 (기본: 0.0.0.0)')
+    parser.add_argument('--port', type=int, help='서버 포트 (기본: 8000)')
+    parser.add_argument('--workers', type=int, help='워커 수 (기본: 1)')
+    parser.add_argument('--reload', action='store_true', help='자동 리로드 (개발 모드)')
+    parser.add_argument('--config', type=str, help='설정 파일 경로')
     
     args = parser.parse_args()
     
-    # Merge: CLI args > config file > defaults
-    host = args.host or config.server.host
-    port = args.port or config.server.port
-    workers = args.workers or config.server.workers
-    reload = args.reload if args.reload is not None else config.server.reload
-    log_level = args.log_level or config.log.level.lower()
+    # 설정 파일 로드
+    config_file = args.config or find_config_file()
+    config = {}
+    if config_file:
+        config = load_properties(config_file)
+        print(f"[Config] Loaded from: {config_file}")
     
-    # Print configuration
-    print("=" * 60)
-    print("Orange3-Web Backend Server")
-    print("=" * 60)
-    print(f"  Host:     {host}")
-    print(f"  Port:     {port}")
-    print(f"  Workers:  {workers}")
-    print(f"  Reload:   {reload}")
-    print(f"  LogLevel: {log_level}")
-    print("=" * 60)
+    # 설정 우선순위: CLI > 설정 파일 > 환경 변수 > 기본값
+    host = args.host or config.get('server.host') or os.environ.get('HOST', '0.0.0.0')
+    port = args.port or int(config.get('server.port', 0)) or int(os.environ.get('PORT', 8000))
+    workers = args.workers or int(config.get('server.workers', 0)) or int(os.environ.get('WORKERS', 1))
+    reload_mode = args.reload or config.get('server.reload', '').lower() == 'true'
     
-    # Uvicorn config
+    print(f"[Config] Host: {host}")
+    print(f"[Config] Port: {port}")
+    print(f"[Config] Workers: {workers}")
+    print(f"[Config] Reload: {reload_mode}")
+    print()
+    
+    # uvicorn 실행
+    import uvicorn
+    
     uvicorn_config = {
-        "app": "app.main:app",
-        "host": host,
-        "port": port,
-        "log_level": log_level,
+        'app': 'app.main:app',
+        'host': host,
+        'port': port,
+        'reload': reload_mode,
     }
     
-    # Workers and reload are mutually exclusive
-    if reload:
-        uvicorn_config["reload"] = True
-        if workers > 1:
-            print("Warning: --reload is incompatible with multiple workers. Using 1 worker.")
-    else:
-        uvicorn_config["workers"] = workers
+    # 워커 수 (reload 모드에서는 사용 불가)
+    if workers > 1 and not reload_mode:
+        uvicorn_config['workers'] = workers
     
-    # Run server
+    print(f"🍊 Starting Orange3-Web Backend on http://{host}:{port}")
+    print()
+    
     uvicorn.run(**uvicorn_config)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
-
