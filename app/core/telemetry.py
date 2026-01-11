@@ -39,16 +39,21 @@ from opentelemetry.trace import Status, StatusCode
 try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
     OTLP_AVAILABLE = True
 except ImportError:
     OTLP_AVAILABLE = False
+
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
+from opentelemetry._logs import set_logger_provider
 
 
 @dataclass
 class TelemetryConfig:
     """Configuration for OpenTelemetry."""
     service_name: str = "orange3-web-backend"
-    service_version: str = "0.27.10"
+    service_version: str = "0.33.0"
     environment: str = "development"
     otel_endpoint: Optional[str] = None
     enable_console: bool = False
@@ -126,8 +131,8 @@ class Telemetry:
         # Setup metrics
         self._setup_metrics(resource)
         
-        # Setup logging instrumentation
-        self._setup_logging()
+        # Setup logging
+        self._setup_logging(resource)
         
         # Instrument FastAPI
         FastAPIInstrumentor.instrument_app(app)
@@ -263,8 +268,26 @@ class Telemetry:
         self._resource_monitor_thread.start()
         logging.info("[OTel] Resource monitoring started")
         
-    def _setup_logging(self) -> None:
-        """Configure logging instrumentation."""
+    def _setup_logging(self, resource: Resource) -> None:
+        """Configure logging with OTLP export."""
+        # Create LoggerProvider
+        provider = LoggerProvider(resource=resource)
+        
+        # Add OTLP Exporter if endpoint is configured
+        if self.config.otel_endpoint and OTLP_AVAILABLE:
+            exporter = OTLPLogExporter(
+                endpoint=f"http://{self.config.otel_endpoint}/v1/logs"
+            )
+            provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+            logging.info(f"[OTel] Logging: OTLP exporter -> {self.config.otel_endpoint}")
+        elif self.config.enable_console:
+            provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+            logging.info("[OTel] Logging: Console exporter")
+        else:
+            logging.info("[OTel] Logging: No exporter (in-memory only)")
+            
+        set_logger_provider(provider)
+        
         # Instrument Python logging to include trace context
         try:
             LoggingInstrumentor().instrument(set_logging_format=True)
@@ -273,19 +296,28 @@ class Telemetry:
         
         # Setup custom log handler
         handler = OTelLogHandler(self)
-        log_level = getattr(logging, self.config.log_level.upper(), logging.INFO)
-        handler.setLevel(log_level)
-        handler.setFormatter(logging.Formatter('%(name)s - %(levelname)s - %(message)s'))
         
-        # Add handler to root logger and ensure level is set
+        # Setup OTLP Log handler
+        otlp_handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
+        
+        log_level = getattr(logging, self.config.log_level.upper(), logging.INFO)
+        
+        # Formatters
+        formatter = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        otlp_handler.setFormatter(formatter)
+        
+        # Add handlers to root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
         root_logger.addHandler(handler)
+        root_logger.addHandler(otlp_handler)
         
         # Also add to uvicorn loggers
         for logger_name in ['uvicorn', 'uvicorn.access', 'uvicorn.error', 'fastapi']:
             logger = logging.getLogger(logger_name)
             logger.addHandler(handler)
+            logger.addHandler(otlp_handler)
         
         logging.info(f"[OTel] Logging initialized with level: {self.config.log_level}")
         
@@ -455,7 +487,7 @@ def init_telemetry(app: FastAPI, config: Optional[TelemetryConfig] = None) -> Te
         # Load from environment or use defaults
         config = TelemetryConfig(
             service_name=os.getenv("OTEL_SERVICE_NAME", "orange3-web-backend"),
-            service_version=os.getenv("SERVICE_VERSION", "0.27.10"),
+            service_version=os.getenv("SERVICE_VERSION", "0.33.0"),
             environment=os.getenv("ENVIRONMENT", "development"),
             otel_endpoint=os.getenv("OTEL_ENDPOINT"),
             enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",

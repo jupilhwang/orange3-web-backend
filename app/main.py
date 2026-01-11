@@ -349,7 +349,7 @@ app = FastAPI(
     ## Authentication
     Use `X-Tenant-ID` header for multi-tenant access.
     """,
-    version="1.0.0",
+    version=SERVER_VERSION,
     lifespan=lifespan
 )
 

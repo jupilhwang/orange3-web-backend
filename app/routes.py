@@ -11,6 +11,9 @@ import site
 import uuid
 from typing import Dict, Any, Optional, List
 
+import base64
+import pickle
+import io
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -226,6 +229,114 @@ async def export_workflow(workflow_id: str, tenant: Tenant = Depends(get_current
         )
     
     raise HTTPException(status_code=501, detail="Export not available")
+
+
+# ============================================================================
+# OWS Pickle and Literal Decoding
+# ============================================================================
+
+class DecodePickleRequest(BaseModel):
+    """Request model for decoding a base64 pickle string."""
+    pickle_data: str
+
+
+class DecodeLiteralRequest(BaseModel):
+    """Request model for decoding a Python literal string."""
+    literal_data: str
+
+
+def _safe_serialize_pickle(obj):
+    """Recursively convert unpickled objects to JSON-serializable types."""
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    if isinstance(obj, bytes):
+        # bytes를 base64 문자열로 변환
+        return {"_type": "bytes", "value": base64.b64encode(obj).decode('ascii')}
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize_pickle(i) for i in obj]
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize_pickle(v) for k, v in obj.items()}
+    
+    # Handle common Orange types if they have __dict__
+    if hasattr(obj, "__dict__"):
+        # Filter out private attributes and potentially circular refs
+        data = {}
+        for k, v in obj.__dict__.items():
+            if not k.startswith('_'):
+                try:
+                    data[str(k)] = _safe_serialize_pickle(v)
+                except Exception:
+                    data[str(k)] = str(v)
+        return data
+        
+    return str(obj)
+
+
+def _safe_serialize_literal(obj):
+    """Recursively convert Python literal objects to JSON-serializable types."""
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    if isinstance(obj, bytes):
+        # bytes를 base64 문자열로 변환
+        return {"_type": "bytes", "value": base64.b64encode(obj).decode('ascii')}
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize_literal(i) for i in obj]
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize_literal(v) for k, v in obj.items()}
+    return str(obj)
+
+
+@workflow_router.post("/ows/decode_pickle")
+async def decode_ows_pickle(data: DecodePickleRequest):
+    """Decode a base64-encoded Orange3 pickle string into a JSON-friendly dict."""
+    try:
+        binary_data = base64.b64decode(data.pickle_data)
+        
+        # Ensure common Orange modules are available for unpickling
+        if ORANGE_AVAILABLE:
+            import Orange
+            import orangewidget.settings
+        
+        # Unpickle the data
+        # Note: In a production environment, this should be done with extreme caution
+        # due to security risks of pickle.loads.
+        obj = pickle.loads(binary_data)
+        
+        # Convert to JSON-compatible structure
+        result = _safe_serialize_pickle(obj)
+        return result
+    except Exception as e:
+        logger.error(f"Pickle decoding failed: {e}")
+        return {"error": str(e), "fallback": True}
+
+
+@workflow_router.post("/ows/decode_literal")
+async def decode_ows_literal(data: DecodeLiteralRequest):
+    """Decode a Python literal string (from OWS format='literal') into a JSON-friendly dict."""
+    try:
+        import ast
+        
+        # HTML 엔티티 디코딩
+        literal_str = data.literal_data
+        literal_str = literal_str.replace('&amp;', '&')
+        literal_str = literal_str.replace('&lt;', '<')
+        literal_str = literal_str.replace('&gt;', '>')
+        literal_str = literal_str.replace('&quot;', '"')
+        literal_str = literal_str.replace('&apos;', "'")
+        
+        # Python literal 파싱
+        obj = ast.literal_eval(literal_str)
+        
+        # Convert to JSON-compatible structure
+        result = _safe_serialize_literal(obj)
+        return result
+    except Exception as e:
+        logger.error(f"Literal decoding failed: {e}")
+        return {"error": str(e), "fallback": True}
 
 
 # ============================================================================
