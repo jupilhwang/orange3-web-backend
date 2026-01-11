@@ -57,10 +57,11 @@ async def save_column_metadata(
     # Define metadata filename
     # For simplicity, we store it in the tenant's upload directory as {file_id}.metadata.json
     upload_dir = get_tenant_upload_dir(x_tenant_id)
-    if not upload_dir.exists():
-        upload_dir.mkdir(parents=True, exist_ok=True)
-    
     metadata_path = upload_dir / f"{file_id}.metadata.json"
+    
+    # Ensure parent directory exists (file_id might contain subdirectories like 'datasets/')
+    if not metadata_path.parent.exists():
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:
         metadata_content = {
