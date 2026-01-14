@@ -200,9 +200,8 @@ class MDNSConfig:
     service_name: str = "orange3-backend-{hostname}"
     port: int = 8000
     
-    # Network settings (RFC 6762 defaults)
+    # Network settings (RFC 6762 defaults, IPv4 only)
     multicast_address: str = "224.0.0.251"
-    multicast_address_ipv6: str = "ff02::fb"
     udp_port: int = 5353
     interface: str = ""  # Empty = all interfaces
 
@@ -265,12 +264,11 @@ class ConfigManager:
         "log.level": "LOG_LEVEL",
         "log.database_echo": "DATABASE_ECHO",
         
-        # mDNS
+        # mDNS (IPv4 only)
         "mdns.enabled": "MDNS_ENABLED",
         "mdns.service_name": "MDNS_SERVICE_NAME",
         "mdns.port": "MDNS_PORT",
         "mdns.multicast_address": "MDNS_MULTICAST_ADDRESS",
-        "mdns.multicast_address_ipv6": "MDNS_MULTICAST_ADDRESS_IPV6",
         "mdns.udp_port": "MDNS_UDP_PORT",
         "mdns.interface": "MDNS_INTERFACE",
     }
@@ -398,7 +396,6 @@ class ConfigManager:
                 service_name=self.get("mdns.service_name", "orange3-backend-{hostname}"),
                 port=self.get("mdns.port", 8000, int),
                 multicast_address=self.get("mdns.multicast_address", "224.0.0.251"),
-                multicast_address_ipv6=self.get("mdns.multicast_address_ipv6", "ff02::fb"),
                 udp_port=self.get("mdns.udp_port", 5353, int),
                 interface=self.get("mdns.interface", ""),
             ),

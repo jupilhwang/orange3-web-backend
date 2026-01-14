@@ -271,13 +271,12 @@ async def lifespan(fastapi_app: FastAPI):
     if mdns_config.enabled and is_mdns_available():
         print("\n📡 mDNS Service Discovery...")
         
-        # Create mDNS service config
+        # Create mDNS service config (IPv4 only)
         mdns_svc_config = MDNSServiceConfig(
             enabled=mdns_config.enabled,
             service_name=mdns_config.service_name,
             port=mdns_config.port,
             multicast_address=mdns_config.multicast_address,
-            multicast_address_ipv6=mdns_config.multicast_address_ipv6,
             udp_port=mdns_config.udp_port,
             interface=mdns_config.interface,
         )

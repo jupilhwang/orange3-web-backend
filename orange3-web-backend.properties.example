@@ -35,3 +35,13 @@ storage.max_db_file_size=52428800
 # log.level=INFO
 # log.database_echo=false
 
+# =============================================================================
+# mDNS Service Discovery (IPv4 only)
+# =============================================================================
+# Backend advertises itself via mDNS for frontend discovery
+# mdns.enabled=true
+# mdns.service_name=orange3-backend
+# mdns.instance_name=orange3-backend
+# mdns.port=8000
+# mdns.multicast_address=224.0.0.251
+# mdns.udp_port=5353

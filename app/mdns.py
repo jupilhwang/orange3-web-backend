@@ -12,7 +12,6 @@ Configuration (orange3-web-backend.properties):
     mdns.service_name=orange3-backend
     mdns.port=8000
     mdns.multicast_address=224.0.0.251
-    mdns.multicast_address_ipv6=ff02::fb
     mdns.udp_port=5353
     mdns.interface=
 """
@@ -47,16 +46,15 @@ except ImportError:
     logger.warning("Install with: pip install zeroconf")
 
 
-# Default mDNS settings (RFC 6762)
+# Default mDNS settings (RFC 6762, IPv4 only)
 DEFAULT_SERVICE_TYPE = "_orange3-web._tcp.local."
 DEFAULT_MULTICAST_ADDRESS = "224.0.0.251"
-DEFAULT_MULTICAST_ADDRESS_IPV6 = "ff02::fb"
 DEFAULT_UDP_PORT = 5353
 
 
 @dataclass
 class MDNSConfig:
-    """mDNS configuration."""
+    """mDNS configuration (IPv4 only)."""
     
     # Service settings
     enabled: bool = True
@@ -64,9 +62,8 @@ class MDNSConfig:
     service_name: str = "orange3-backend"
     port: int = 8000
     
-    # Network settings
+    # Network settings (IPv4 only)
     multicast_address: str = DEFAULT_MULTICAST_ADDRESS
-    multicast_address_ipv6: str = DEFAULT_MULTICAST_ADDRESS_IPV6
     udp_port: int = DEFAULT_UDP_PORT
     interface: str = ""  # Empty = all interfaces
     
@@ -82,9 +79,6 @@ class MDNSConfig:
             port=config_manager.get("mdns.port", 8000, int),
             multicast_address=config_manager.get(
                 "mdns.multicast_address", DEFAULT_MULTICAST_ADDRESS
-            ),
-            multicast_address_ipv6=config_manager.get(
-                "mdns.multicast_address_ipv6", DEFAULT_MULTICAST_ADDRESS_IPV6
             ),
             udp_port=config_manager.get("mdns.udp_port", DEFAULT_UDP_PORT, int),
             interface=config_manager.get("mdns.interface", ""),
@@ -224,14 +218,10 @@ class MDNSService:
                 addresses=[socket.inet_aton(local_ip)],
             )
             
-            # Create Zeroconf instance
+            # Create Zeroconf instance (IPv4 only)
             # Note: Custom multicast address/port requires patching zeroconf internals
             # For standard mDNS, we use the default settings
-            ip_version = IPVersion.V4Only
-            if self.config.multicast_address_ipv6:
-                ip_version = IPVersion.All
-            
-            self._zeroconf = AsyncZeroconf(ip_version=ip_version)
+            self._zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
             
             # Register service
             await self._zeroconf.async_register_service(self._service_info)
