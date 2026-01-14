@@ -22,6 +22,14 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
+# Optional netifaces for interface-specific binding
+try:
+    import netifaces
+    NETIFACES_AVAILABLE = True
+except ImportError:
+    NETIFACES_AVAILABLE = False
+    netifaces = None
+
 logger = logging.getLogger(__name__)
 
 # Check zeroconf availability
@@ -133,9 +141,32 @@ class MDNSService:
         self._registered = False
     
     def _get_local_ip(self) -> str:
-        """Get local IP address for the service."""
+        """Get local IP address for the service.
+        
+        If mdns.interface is configured and netifaces is available,
+        returns the IP of that interface. Otherwise, determines the default outgoing IP.
+        """
+        # If specific interface is configured and netifaces is available, get its IP
+        if self.config.interface and NETIFACES_AVAILABLE:
+            try:
+                iface_addrs = netifaces.ifaddresses(self.config.interface)
+                if netifaces.AF_INET in iface_addrs:
+                    ipv4_info = iface_addrs[netifaces.AF_INET][0]
+                    ip = ipv4_info.get('addr', '127.0.0.1')
+                    logger.info(f"Using interface {self.config.interface} IP: {ip}")
+                    return ip
+                else:
+                    logger.warning(f"Interface {self.config.interface} has no IPv4 address")
+            except ValueError:
+                logger.warning(f"Interface {self.config.interface} not found")
+            except Exception as e:
+                logger.warning(f"Could not get IP for interface {self.config.interface}: {e}")
+        elif self.config.interface and not NETIFACES_AVAILABLE:
+            logger.warning(f"mdns.interface={self.config.interface} configured but netifaces not installed")
+            logger.warning("Install with: pip install netifaces")
+        
+        # Default: determine local IP via outgoing connection
         try:
-            # Create a socket to determine the local IP
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(0.1)
             try:
@@ -173,14 +204,31 @@ class MDNSService:
         
         return base_name
     
-    def _get_interface_choice(self) -> InterfaceChoice:
-        """Get interface choice for zeroconf."""
-        if not self.config.interface:
-            return InterfaceChoice.All
+    def _get_interfaces(self) -> Optional[List[str]]:
+        """Get list of interface IPs for zeroconf.
         
-        # Note: zeroconf doesn't directly support interface by name
-        # We use All and let the OS routing handle it
-        return InterfaceChoice.All
+        Returns:
+            List of IP addresses if interface is configured and netifaces is available,
+            None for all interfaces
+        """
+        if not self.config.interface:
+            return None
+        
+        if not NETIFACES_AVAILABLE:
+            logger.warning("netifaces not installed, cannot bind to specific interface")
+            return None
+        
+        try:
+            iface_addrs = netifaces.ifaddresses(self.config.interface)
+            if netifaces.AF_INET in iface_addrs:
+                # Return list of IPv4 addresses for this interface
+                return [addr['addr'] for addr in iface_addrs[netifaces.AF_INET]]
+        except ValueError:
+            logger.warning(f"Interface {self.config.interface} not found, using all interfaces")
+        except Exception as e:
+            logger.warning(f"Could not get interfaces: {e}")
+        
+        return None
     
     async def register(self, properties: Optional[Dict[str, str]] = None) -> bool:
         """
@@ -235,7 +283,15 @@ class MDNSService:
             # Create Zeroconf instance (IPv4 only)
             # Note: Custom multicast address/port requires patching zeroconf internals
             # For standard mDNS, we use the default settings
-            self._zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
+            interfaces = self._get_interfaces()
+            if interfaces:
+                logger.info(f"Using specific interfaces for mDNS: {interfaces}")
+                self._zeroconf = AsyncZeroconf(
+                    ip_version=IPVersion.V4Only,
+                    interfaces=interfaces
+                )
+            else:
+                self._zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
             
             # Register service
             await self._zeroconf.async_register_service(self._service_info)
