@@ -272,8 +272,17 @@ async def lifespan(fastapi_app: FastAPI):
         print("\n📡 mDNS Service Discovery...")
         
         # Create mDNS service config (IPv4 only)
+        # Ensure service_type ends with ".local."
+        service_type = mdns_config.service_type
+        if not service_type.endswith(".local."):
+            if service_type.endswith("."):
+                service_type = service_type + "local."
+            else:
+                service_type = service_type + ".local."
+        
         mdns_svc_config = MDNSServiceConfig(
             enabled=mdns_config.enabled,
+            service_type=service_type,
             service_name=mdns_config.service_name,
             port=mdns_config.port,
             multicast_address=mdns_config.multicast_address,

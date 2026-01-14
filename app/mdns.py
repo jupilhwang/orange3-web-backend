@@ -5,10 +5,9 @@ This module provides mDNS (Multicast DNS) based service advertisement
 for the Orange3 Web Backend. It allows the backend to advertise itself
 on the local network so that frontends can automatically discover it.
 
-Service Type: _orange3-web._tcp.local.
-
 Configuration (orange3-web-backend.properties):
     mdns.enabled=true
+    mdns.service_type=_orange3-web._tcp
     mdns.service_name=orange3-backend
     mdns.port=8000
     mdns.multicast_address=224.0.0.251
@@ -73,8 +72,17 @@ class MDNSConfig:
     @classmethod
     def from_config_manager(cls, config_manager) -> "MDNSConfig":
         """Create MDNSConfig from ConfigManager."""
+        # Get service_type and ensure it ends with ".local."
+        service_type = config_manager.get("mdns.service_type", "_orange3-web._tcp")
+        if not service_type.endswith(".local."):
+            if service_type.endswith("."):
+                service_type = service_type + "local."
+            else:
+                service_type = service_type + ".local."
+        
         return cls(
             enabled=config_manager.get("mdns.enabled", True, bool),
+            service_type=service_type,
             service_name=config_manager.get("mdns.service_name", "orange3-backend"),
             port=config_manager.get("mdns.port", 8000, int),
             multicast_address=config_manager.get(
