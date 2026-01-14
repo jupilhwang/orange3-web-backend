@@ -280,11 +280,14 @@ async def lifespan(fastapi_app: FastAPI):
             else:
                 service_type = service_type + ".local."
         
+        # Use server.port for mDNS service port (not mdns.port)
+        server_port = app_config.server.port
+        
         mdns_svc_config = MDNSServiceConfig(
             enabled=mdns_config.enabled,
             service_type=service_type,
             service_name=mdns_config.service_name,
-            port=mdns_config.port,
+            port=server_port,  # Use server.port instead of mdns.port
             multicast_address=mdns_config.multicast_address,
             udp_port=mdns_config.udp_port,
             interface=mdns_config.interface,

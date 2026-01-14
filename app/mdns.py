@@ -9,10 +9,11 @@ Configuration (orange3-web-backend.properties):
     mdns.enabled=true
     mdns.service_type=_orange3-web._tcp
     mdns.service_name=orange3-backend
-    mdns.port=8000
     mdns.multicast_address=224.0.0.251
     mdns.udp_port=5353
     mdns.interface=
+
+Note: The service port is automatically taken from server.port config.
 """
 
 import socket
@@ -59,7 +60,7 @@ class MDNSConfig:
     enabled: bool = True
     service_type: str = DEFAULT_SERVICE_TYPE
     service_name: str = "orange3-backend"
-    port: int = 8000
+    port: int = 8000  # Service port (set from server.port at runtime)
     
     # Network settings (IPv4 only)
     multicast_address: str = DEFAULT_MULTICAST_ADDRESS
@@ -70,8 +71,13 @@ class MDNSConfig:
     properties: Dict[str, str] = field(default_factory=dict)
     
     @classmethod
-    def from_config_manager(cls, config_manager) -> "MDNSConfig":
-        """Create MDNSConfig from ConfigManager."""
+    def from_config_manager(cls, config_manager, server_port: int = 8000) -> "MDNSConfig":
+        """Create MDNSConfig from ConfigManager.
+        
+        Args:
+            config_manager: Configuration manager instance
+            server_port: Server port from server.port config (passed at runtime)
+        """
         # Get service_type and ensure it ends with ".local."
         service_type = config_manager.get("mdns.service_type", "_orange3-web._tcp")
         if not service_type.endswith(".local."):
@@ -84,7 +90,7 @@ class MDNSConfig:
             enabled=config_manager.get("mdns.enabled", True, bool),
             service_type=service_type,
             service_name=config_manager.get("mdns.service_name", "orange3-backend"),
-            port=config_manager.get("mdns.port", 8000, int),
+            port=server_port,  # Use server.port instead of mdns.port
             multicast_address=config_manager.get(
                 "mdns.multicast_address", DEFAULT_MULTICAST_ADDRESS
             ),

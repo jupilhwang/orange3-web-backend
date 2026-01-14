@@ -194,11 +194,12 @@ class MDNSConfig:
     
     Custom multicast addresses and ports can be configured for
     private networks or firewall environments.
+    
+    Note: The service port is automatically taken from server.port config.
     """
     enabled: bool = True
     service_type: str = "_orange3-web._tcp"  # Service type (without .local.)
     service_name: str = "orange3-backend-{hostname}"
-    port: int = 8000
     
     # Network settings (RFC 6762 defaults, IPv4 only)
     multicast_address: str = "224.0.0.251"
@@ -265,10 +266,10 @@ class ConfigManager:
         "log.database_echo": "DATABASE_ECHO",
         
         # mDNS (IPv4 only)
+        # Note: mdns.port removed - uses server.port automatically
         "mdns.enabled": "MDNS_ENABLED",
         "mdns.service_type": "MDNS_SERVICE_TYPE",
         "mdns.service_name": "MDNS_SERVICE_NAME",
-        "mdns.port": "MDNS_PORT",
         "mdns.multicast_address": "MDNS_MULTICAST_ADDRESS",
         "mdns.udp_port": "MDNS_UDP_PORT",
         "mdns.interface": "MDNS_INTERFACE",
@@ -396,7 +397,6 @@ class ConfigManager:
                 enabled=self.get("mdns.enabled", True, bool),
                 service_type=self.get("mdns.service_type", "_orange3-web._tcp"),
                 service_name=self.get("mdns.service_name", "orange3-backend-{hostname}"),
-                port=self.get("mdns.port", 8000, int),
                 multicast_address=self.get("mdns.multicast_address", "224.0.0.251"),
                 udp_port=self.get("mdns.udp_port", 5353, int),
                 interface=self.get("mdns.interface", ""),
