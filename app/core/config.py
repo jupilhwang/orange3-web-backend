@@ -181,6 +181,33 @@ class LogConfig:
 
 
 @dataclass
+class MDNSConfig:
+    """
+    mDNS (Multicast DNS) configuration for service discovery.
+    
+    mDNS allows the backend to advertise itself on the local network
+    so that frontends can automatically discover and connect to it.
+    
+    Standard mDNS uses:
+    - IPv4 Multicast: 224.0.0.251
+    - IPv6 Multicast: ff02::fb
+    - UDP Port: 5353
+    
+    Custom multicast addresses and ports can be configured for
+    private networks or firewall environments.
+    """
+    enabled: bool = True
+    service_name: str = "orange3-backend-{hostname}"
+    port: int = 8000
+    
+    # Network settings (RFC 6762 defaults)
+    multicast_address: str = "224.0.0.251"
+    multicast_address_ipv6: str = "ff02::fb"
+    udp_port: int = 5353
+    interface: str = ""  # Empty = all interfaces
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     server: ServerConfig = field(default_factory=ServerConfig)
@@ -188,6 +215,7 @@ class AppConfig:
     path: PathConfig = field(default_factory=PathConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    mdns: MDNSConfig = field(default_factory=MDNSConfig)
 
 
 class ConfigManager:
@@ -236,6 +264,15 @@ class ConfigManager:
         # Logging
         "log.level": "LOG_LEVEL",
         "log.database_echo": "DATABASE_ECHO",
+        
+        # mDNS
+        "mdns.enabled": "MDNS_ENABLED",
+        "mdns.service_name": "MDNS_SERVICE_NAME",
+        "mdns.port": "MDNS_PORT",
+        "mdns.multicast_address": "MDNS_MULTICAST_ADDRESS",
+        "mdns.multicast_address_ipv6": "MDNS_MULTICAST_ADDRESS_IPV6",
+        "mdns.udp_port": "MDNS_UDP_PORT",
+        "mdns.interface": "MDNS_INTERFACE",
     }
     
     def __init__(self, config_file: Optional[Path] = None):
@@ -355,6 +392,15 @@ class ConfigManager:
             log=LogConfig(
                 level=self.get("log.level", "INFO"),
                 database_echo=self.get("log.database_echo", False, bool),
+            ),
+            mdns=MDNSConfig(
+                enabled=self.get("mdns.enabled", True, bool),
+                service_name=self.get("mdns.service_name", "orange3-backend-{hostname}"),
+                port=self.get("mdns.port", 8000, int),
+                multicast_address=self.get("mdns.multicast_address", "224.0.0.251"),
+                multicast_address_ipv6=self.get("mdns.multicast_address_ipv6", "ff02::fb"),
+                udp_port=self.get("mdns.udp_port", 5353, int),
+                interface=self.get("mdns.interface", ""),
             ),
         )
     

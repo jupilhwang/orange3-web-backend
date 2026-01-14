@@ -129,6 +129,12 @@ from .routes import (
     set_websocket_manager,
 )
 
+# mDNS Service Discovery
+from .mdns import (
+    MDNSService, MDNSConfig as MDNSServiceConfig,
+    is_mdns_available, set_mdns_service
+)
+
 
 # ============================================================================
 # Managers (Thread-safe singletons)
@@ -162,7 +168,6 @@ def get_registry():
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     """Application lifespan manager."""
-    import httpx
     
     print("=" * 60)
     print("Starting Orange3 Web Backend...")
@@ -185,16 +190,12 @@ async def lifespan(fastapi_app: FastAPI):
             init_telemetry(fastapi_app, config)
             print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
     
-    # Load balancer configuration
-    # FRONTEND_URL can be comma-separated for multiple frontends
-    frontend_url_env = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    frontend_urls = [url.strip() for url in frontend_url_env.split(",") if url.strip()]
-    backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-    lb_enabled = os.getenv("LB_ENABLED", "true").lower() == "true"
-    lb_weight = int(os.getenv("LB_WEIGHT", "1"))
+    # Get mDNS configuration from config file
+    app_config = get_config()
+    mdns_config = app_config.mdns
     
-    # Track successfully registered frontends for cleanup
-    registered_frontends = []
+    # mDNS service instance
+    mdns_service = None
     
     # Initialize database
     print("\n📦 Initializing database...")
@@ -266,46 +267,54 @@ async def lifespan(fastapi_app: FastAPI):
         await cleanup_stale_tasks(timeout_minutes=30)
         print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
     
-    # Register with Frontend Load Balancer(s)
-    if lb_enabled:
-        print(f"\n⚖️  Load Balancer registration ({len(frontend_urls)} frontend(s))...")
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for frontend_url in frontend_urls:
-                try:
-                    resp = await client.post(
-                        f"{frontend_url}/internal/register",
-                        json={"url": backend_url, "weight": lb_weight}
-                    )
-                    if resp.status_code == 200:
-                        print(f"   ✓ Registered with: {frontend_url} (backend: {backend_url})")
-                        registered_frontends.append(frontend_url)
-                    else:
-                        print(f"   ✗ Registration failed ({frontend_url}): {resp.status_code}")
-                except Exception as e:
-                    print(f"   ✗ Could not register with {frontend_url}: {e}")
+    # Register with mDNS for service discovery
+    if mdns_config.enabled and is_mdns_available():
+        print("\n📡 mDNS Service Discovery...")
+        
+        # Create mDNS service config
+        mdns_svc_config = MDNSServiceConfig(
+            enabled=mdns_config.enabled,
+            service_name=mdns_config.service_name,
+            port=mdns_config.port,
+            multicast_address=mdns_config.multicast_address,
+            multicast_address_ipv6=mdns_config.multicast_address_ipv6,
+            udp_port=mdns_config.udp_port,
+            interface=mdns_config.interface,
+        )
+        
+        # Create and register mDNS service
+        mdns_service = MDNSService(mdns_svc_config)
+        set_mdns_service(mdns_service)
+        
+        # TXT record properties for service metadata
+        txt_properties = {
+            "version": SERVER_VERSION,
+            "weight": "1",
+            "environment": os.getenv("ENVIRONMENT", "development"),
+        }
+        
+        await mdns_service.register(txt_properties)
+        
+        print(f"   Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}")
+        if mdns_config.interface:
+            print(f"   Interface: {mdns_config.interface}")
+    elif mdns_config.enabled:
+        print("\n📡 mDNS disabled (zeroconf not installed)")
+        print("   Install with: pip install zeroconf")
+    else:
+        print("\n📡 mDNS disabled in configuration")
     
-    # Store registered frontends in app state for cleanup
-    fastapi_app.state.registered_frontends = registered_frontends
-    fastapi_app.state.backend_url = backend_url
-    fastapi_app.state.lb_enabled = lb_enabled
+    # Store mDNS service in app state for cleanup
+    fastapi_app.state.mdns_service = mdns_service
     
     print("=" * 60)
     
     yield
     
-    # Cleanup - Deregister from Load Balancer(s)
-    if fastapi_app.state.lb_enabled and fastapi_app.state.registered_frontends:
-        print(f"\n⚖️  Deregistering from Load Balancer ({len(fastapi_app.state.registered_frontends)} frontend(s))...")
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            for frontend_url in fastapi_app.state.registered_frontends:
-                try:
-                    await client.post(
-                        f"{frontend_url}/internal/deregister",
-                        json={"url": fastapi_app.state.backend_url}
-                    )
-                    print(f"   ✓ Deregistered from: {frontend_url}")
-                except Exception as e:
-                    print(f"   ✗ Could not deregister from {frontend_url}: {e}")
+    # Cleanup - Unregister mDNS service
+    if fastapi_app.state.mdns_service:
+        print("\n📡 Unregistering mDNS service...")
+        await fastapi_app.state.mdns_service.unregister()
     
     print("\nShutting down Orange3 Web Backend...")
     

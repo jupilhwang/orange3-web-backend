@@ -59,3 +59,6 @@ opentelemetry-exporter-otlp-proto-http>=1.27.0
 
 # System monitoring
 psutil>=6.0.0
+
+# mDNS Service Discovery
+zeroconf>=0.131.0
