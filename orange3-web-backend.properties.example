@@ -2,12 +2,6 @@
 # Copy this file to orange3-web-backend.properties and modify as needed
 
 # =============================================================================
-# Database Configuration
-# =============================================================================
-# database.url=postgresql+asyncpg://user:pass@localhost:5432/orange3
-# database.url=mysql+aiomysql://user:pass@localhost:3306/orange3
-
-# =============================================================================
 # Server Configuration
 # =============================================================================
 # server.host=0.0.0.0
@@ -28,6 +22,12 @@
 # Supported types: sqlite (default), mysql, postgresql, oracle, filesystem, local
 storage.type=sqlite
 storage.max_db_file_size=52428800
+
+# =============================================================================
+# Database Configuration
+# =============================================================================
+# database.url=postgresql+asyncpg://user:pass@localhost:5432/orange3
+# database.url=mysql+aiomysql://user:pass@localhost:3306/orange3
 
 # =============================================================================
 # Logging Configuration
