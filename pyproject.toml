@@ -1,0 +1,85 @@
+[project]
+name = "orange3-web-backend"
+version = "0.34.1"
+description = "Orange3 Web Backend - FastAPI server with Orange3 data mining widgets"
+requires-python = ">=3.12"
+authors = [
+    {name = "Orange3 Web Team"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+
+dependencies = [
+    # FastAPI Backend
+    "fastapi>=0.128.0,<1.0",
+    "uvicorn[standard]>=0.40.0,<1.0",
+    "pydantic>=2.12.0,<3.0",
+    "python-multipart>=0.0.21,<0.1.0",
+    "websockets>=15.0,<16.0",
+    
+    # HTTP client
+    "httpx>=0.28.0,<1.0",
+    
+    # Database
+    "sqlalchemy>=2.0.45",
+    "greenlet>=3.3.0",
+    "aiosqlite>=0.22.0",
+    "asyncpg>=0.30.0",
+    
+    # Orange3 Data Mining
+    "orange3>=3.40.0,<4.0",
+    "orange3-text>=1.16.3,<2.0",
+    "orange3-imageanalytics>=0.13.0,<1.0",
+    "orange3-geo>=0.5",
+    "orange3-bioinformatics>=4.8.4,<5.0",
+    "orange3-survival-analysis>=0.6.3",
+    "orange3-timeseries>=0.6.3",
+    "orange3-fairness>=1.0.2",
+    "orange3-educational>=0.8.1",
+    
+    # PyQt6 (for Orange3)
+    "pyqt6>=6.10.0,<7.0",
+    "pyqt6-sip>=13.10.0",
+    
+    # Data Science
+    "numpy>=2.0.0,<3.0",
+    "scipy>=1.14.0,<2.0",
+    "scikit-learn>=1.5.0,<2.0",
+    "pandas>=2.2.0,<3.0",
+    
+    # OpenTelemetry
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-logging>=0.48b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+    
+    # System monitoring
+    "psutil>=6.0.0",
+    
+    # mDNS Service Discovery
+    "zeroconf>=0.131.0",
+    "netifaces>=0.11.0",
+]
+
+[project.optional-dependencies]
+mysql = ["aiomysql>=0.2.0"]
+oracle = ["oracledb>=2.5.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

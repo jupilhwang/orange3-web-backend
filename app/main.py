@@ -9,11 +9,24 @@ Features:
 - Async locks for concurrent access protection
 - Multi-tenant support via X-Tenant-ID header
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, APIRouter, UploadFile, File, Header
+
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    Depends,
+    HTTPException,
+    APIRouter,
+    UploadFile,
+    File,
+    Header,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+import ipaddress
 import os
 import logging
+from urllib.parse import urlparse
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
@@ -24,6 +37,7 @@ from pydantic import BaseModel
 
 # Server startup timestamp - used to detect server restarts
 SERVER_START_TIME = int(time.time())
+
 
 # Server version - read from VERSION file
 def get_server_version() -> str:
@@ -41,7 +55,66 @@ def get_server_version() -> str:
                 pass
     return "unknown"
 
+
 SERVER_VERSION = get_server_version()
+
+
+def validate_url_for_ssrf(url: str) -> tuple[bool, str]:
+    """
+    Validate URL to prevent SSRF attacks.
+
+    Returns:
+        (is_valid, error_message)
+    """
+    try:
+        parsed = urlparse(url)
+
+        # Must have scheme
+        if not parsed.scheme:
+            return False, "URL must have a scheme (http/https)"
+
+        # Only allow http/https
+        if parsed.scheme not in ("http", "https"):
+            return False, f"Scheme '{parsed.scheme}' not allowed. Only http/https."
+
+        # Must have hostname
+        if not parsed.hostname:
+            return False, "URL must have a hostname"
+
+        # Block common cloud metadata endpoints
+        blocked_hostnames = [
+            "169.254.169.254",  # AWS/Azure/GCP metadata
+            "metadata.google.internal",
+            "metadata",
+        ]
+        if parsed.hostname.lower() in blocked_hostnames:
+            return False, f"Blocked hostname: {parsed.hostname}"
+
+        # Block private/loopback IPs
+        try:
+            ip = ipaddress.ip_address(parsed.hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+                return (
+                    False,
+                    f"Private/internal IP addresses not allowed: {parsed.hostname}",
+                )
+        except ValueError:
+            # Not an IP, it's a hostname - resolve and check
+            import socket
+
+            try:
+                resolved_ip = socket.gethostbyname(parsed.hostname)
+                ip = ipaddress.ip_address(resolved_ip)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    return False, f"Hostname resolves to private IP: {resolved_ip}"
+            except socket.gaierror:
+                return False, f"Cannot resolve hostname: {parsed.hostname}"
+
+        return True, ""
+
+    except Exception as e:
+        return False, f"Invalid URL: {str(e)}"
+
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -53,27 +126,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Import adapters that wrap existing Orange3 code
 try:
     from .orange_adapter import (
-        OrangeSchemeAdapter, OrangeRegistryAdapter, 
-        get_availability, ORANGE3_AVAILABLE
+        OrangeSchemeAdapter,
+        OrangeRegistryAdapter,
+        get_availability,
+        ORANGE3_AVAILABLE,
     )
+
     ORANGE_AVAILABLE = ORANGE3_AVAILABLE
 except ImportError as e:
     print(f"Warning: Could not import Orange3 adapters: {e}")
     print("Using fallback models")
     ORANGE_AVAILABLE = False
     ORANGE3_AVAILABLE = False
-    
+
     def get_availability():
         return {"orange3": False}
 
+
 from .core.models import (
-    Workflow, WorkflowSummary, WorkflowCreate, WorkflowUpdate,
-    WorkflowNode, NodeCreate, NodeUpdate, NodeState,
-    WorkflowLink, LinkCreate, LinkUpdate,
-    TextAnnotation, ArrowAnnotation, AnnotationCreate,
-    WidgetDescription, WidgetCategory,
-    Position, Rect, Tenant
+    Workflow,
+    WorkflowSummary,
+    WorkflowCreate,
+    WorkflowUpdate,
+    WorkflowNode,
+    NodeCreate,
+    NodeUpdate,
+    NodeState,
+    WorkflowLink,
+    LinkCreate,
+    LinkUpdate,
+    TextAnnotation,
+    ArrowAnnotation,
+    AnnotationCreate,
+    WidgetDescription,
+    WidgetCategory,
+    Position,
+    Rect,
+    Tenant,
 )
+
 # Managers
 from .core import TenantManager, get_current_tenant
 from .websocket_manager import TaskWebSocketManager, task_ws_manager
@@ -81,6 +172,7 @@ from .websocket_manager import TaskWebSocketManager, task_ws_manager
 # OpenTelemetry
 try:
     from .core.telemetry import init_telemetry, get_telemetry, TelemetryConfig
+
     OTEL_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"OpenTelemetry not available: {e}")
@@ -131,8 +223,10 @@ from .routes import (
 
 # mDNS Service Discovery
 from .mdns import (
-    MDNSService, MDNSConfig as MDNSServiceConfig,
-    is_mdns_available, set_mdns_service
+    MDNSService,
+    MDNSConfig as MDNSServiceConfig,
+    is_mdns_available,
+    set_mdns_service,
 )
 
 
@@ -165,19 +259,20 @@ def get_registry():
 # Lifespan
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     """Application lifespan manager."""
-    
+
     print("=" * 60)
     print("Starting Orange3 Web Backend...")
     print("=" * 60)
-    
+
     # Initialize OpenTelemetry
     if OTEL_AVAILABLE and init_telemetry:
         otel_endpoint = os.getenv("OTEL_ENDPOINT")
         otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
-        
+
         if otel_enabled:
             config = TelemetryConfig(
                 service_name="orange3-web-backend",
@@ -189,88 +284,88 @@ async def lifespan(fastapi_app: FastAPI):
             )
             init_telemetry(fastapi_app, config)
             print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
-    
+
     # Get mDNS configuration from config file
     app_config = get_config()
     mdns_config = app_config.mdns
-    
+
     # mDNS service instance
     mdns_service = None
-    
+
     # Initialize database
     print("\n📦 Initializing database...")
     await init_db()
     print("   Database ready (SQLite with WAL mode)")
-    
+
     # Check Orange3 availability
     availability = get_availability()
-    print(f"\n🍊 Orange3: {'✓ Available' if availability.get('orange3') else '✗ Not available'}")
-    
-    if not availability.get('orange3'):
+    print(
+        f"\n🍊 Orange3: {'✓ Available' if availability.get('orange3') else '✗ Not available'}"
+    )
+
+    if not availability.get("orange3"):
         print("   Install with: pip install Orange3")
-    
+
     # Pre-load registry
     registry = get_registry()
     if registry:
         categories = registry.list_categories()
         widgets = registry.list_widgets()
         print(f"\n📊 Discovered {len(widgets)} widgets in {len(categories)} categories")
-    
+
     # Setup workflow router dependencies
     set_registry_getter(get_registry)
     set_websocket_manager(task_ws_manager)
-    
+
     # Setup widget registry router dependencies
     set_widget_registry_getter(get_registry)
-    
+
     print("\n🔒 Async locks enabled for concurrent access protection")
-    
+
     # Start Task Queue Worker
     task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
     if task_worker_enabled:
         from .core.task_queue import (
-            start_worker, cleanup_stale_tasks,
-            set_progress_callback, set_completion_callback
+            start_worker,
+            cleanup_stale_tasks,
+            set_progress_callback,
+            set_completion_callback,
         )
+
         # Import tasks to register them
         import app.tasks  # noqa: F401
-        
+
         # Setup WebSocket callbacks for task progress/completion
         async def on_progress(task_id: str, progress: float, message: str = None):
             # Get tenant_id from task
             from .core.task_queue import get_task_status
+
             task_info = await get_task_status(task_id)
             if task_info:
                 await task_ws_manager.send_progress(
-                    task_id, 
-                    task_info["tenant_id"],
-                    progress, 
-                    message
+                    task_id, task_info["tenant_id"], progress, message
                 )
-        
+
         async def on_completion(task_id: str, status: str, result=None, error=None):
             from .core.task_queue import get_task_status
+
             task_info = await get_task_status(task_id)
             if task_info:
                 await task_ws_manager.send_completion(
-                    task_id,
-                    task_info["tenant_id"],
-                    status,
-                    result,
-                    error
+                    task_id, task_info["tenant_id"], status, result, error
                 )
-        
+
         set_progress_callback(on_progress)
         set_completion_callback(on_completion)
-        
+
         await start_worker(poll_interval=1.0)
         await cleanup_stale_tasks(timeout_minutes=30)
         print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
-    
+
     # Register with mDNS for service discovery
     if mdns_config.enabled and is_mdns_available():
         print("\n📡 mDNS Service Discovery...")
-        
+
         # Create mDNS service config (IPv4 only)
         # Ensure service_type ends with ".local."
         service_type = mdns_config.service_type
@@ -279,10 +374,10 @@ async def lifespan(fastapi_app: FastAPI):
                 service_type = service_type + "local."
             else:
                 service_type = service_type + ".local."
-        
+
         # Use server.port for mDNS service port (not mdns.port)
         server_port = app_config.server.port
-        
+
         mdns_svc_config = MDNSServiceConfig(
             enabled=mdns_config.enabled,
             service_type=service_type,
@@ -292,20 +387,20 @@ async def lifespan(fastapi_app: FastAPI):
             udp_port=mdns_config.udp_port,
             interface=mdns_config.interface,
         )
-        
+
         # Create and register mDNS service
         mdns_service = MDNSService(mdns_svc_config)
         set_mdns_service(mdns_service)
-        
+
         # TXT record properties for service metadata
         txt_properties = {
             "version": SERVER_VERSION,
             "weight": "1",
             "environment": os.getenv("ENVIRONMENT", "development"),
         }
-        
+
         await mdns_service.register(txt_properties)
-        
+
         print(f"   Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}")
         if mdns_config.interface:
             print(f"   Interface: {mdns_config.interface}")
@@ -314,32 +409,34 @@ async def lifespan(fastapi_app: FastAPI):
         print("   Install with: pip install zeroconf")
     else:
         print("\n📡 mDNS disabled in configuration")
-    
+
     # Store mDNS service in app state for cleanup
     fastapi_app.state.mdns_service = mdns_service
-    
+
     print("=" * 60)
-    
+
     yield
-    
+
     # Cleanup - Unregister mDNS service
     if fastapi_app.state.mdns_service:
         print("\n📡 Unregistering mDNS service...")
         await fastapi_app.state.mdns_service.unregister()
-    
+
     print("\nShutting down Orange3 Web Backend...")
-    
+
     # Stop Task Queue Worker
     if task_worker_enabled:
         from .core.task_queue import stop_worker
+
         await stop_worker()
         print("Task Queue worker stopped.")
-    
+
     # Shutdown CPU/IO executor pools
     from .core.data_utils import shutdown_executors
+
     shutdown_executors()
     print("Executor pools shutdown.")
-    
+
     await close_db()
     print("Database connections closed.")
 
@@ -370,9 +467,10 @@ app = FastAPI(
     Use `X-Tenant-ID` header for multi-tenant access.
     """,
     version=SERVER_VERSION,
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -380,6 +478,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Reverse proxy header support
+class ProxyHeadersMiddleware:
+    """Process X-Forwarded-* headers from trusted reverse proxies."""
+
+    TRUSTED_CIDRS = [
+        ipaddress.ip_network(cidr.strip())
+        for cidr in os.environ.get(
+            "TRUSTED_PROXIES",
+            "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        ).split(",")
+        if cidr.strip()
+    ]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            client = scope.get("client")
+            if client:
+                client_ip = ipaddress.ip_address(client[0])
+                is_trusted = any(client_ip in network for network in self.TRUSTED_CIDRS)
+
+                headers = dict(scope.get("headers", []))
+                if is_trusted:
+                    # Trust X-Forwarded-For
+                    xff = headers.get(b"x-forwarded-for", b"").decode()
+                    if xff:
+                        # Use the leftmost IP as the real client
+                        real_ip = xff.split(",")[0].strip()
+                        scope["client"] = (real_ip, client[1])
+                else:
+                    # Strip forwarded headers from untrusted sources
+                    filtered_headers = [
+                        (k, v)
+                        for k, v in scope.get("headers", [])
+                        if k.lower()
+                        not in (
+                            b"x-forwarded-for",
+                            b"x-forwarded-proto",
+                            b"x-forwarded-host",
+                            b"x-real-ip",
+                        )
+                    ]
+                    scope["headers"] = filtered_headers
+
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(ProxyHeadersMiddleware)
 
 
 # ============================================================================
@@ -393,26 +543,30 @@ api_v1 = APIRouter(prefix="/api/v1")
 # Health
 # ============================================================================
 
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     import time
+
     availability = get_availability()
     config = get_config()
-    storage_type = config.storage.type  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
-    
+    storage_type = (
+        config.storage.type
+    )  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
+
     # Database storage types
-    db_storage_types = {'sqlite', 'mysql', 'postgresql', 'oracle', 'database'}
-    
+    db_storage_types = {"sqlite", "mysql", "postgresql", "oracle", "database"}
+
     # Storage path depends on storage type
     if storage_type in db_storage_types:
         storage_path = config.database.url or "sqlite:///./orange3.db"
     else:
         storage_path = str(get_upload_dir())
-    
+
     # Calculate uptime
     uptime_seconds = time.time() - SERVER_START_TIME
-    
+
     # Determine database type from URL
     db_url = config.database.url or ""
     if "postgresql" in db_url or "postgres" in db_url:
@@ -423,7 +577,7 @@ async def health_check():
         database_type = "oracle"
     else:
         database_type = "sqlite"
-    
+
     return {
         "status": "healthy",
         "service": "orange3-web-backend",
@@ -449,7 +603,7 @@ async def get_metrics():
         "service": "orange3-web-backend",
         "version": SERVER_VERSION,
         "otel_available": OTEL_AVAILABLE,
-        "message": "OpenTelemetry not initialized"
+        "message": "OpenTelemetry not initialized",
     }
 
 
@@ -460,11 +614,7 @@ async def get_logs(limit: int = 100):
         telemetry = get_telemetry()
         if telemetry:
             return telemetry.get_logs_response(limit)
-    return {
-        "service": "orange3-web-backend",
-        "total": 0,
-        "logs": []
-    }
+    return {"service": "orange3-web-backend", "total": 0, "logs": []}
 
 
 @app.get("/internal/resources")
@@ -474,12 +624,13 @@ async def get_resources():
         telemetry = get_telemetry()
         if telemetry:
             return telemetry.get_resource_usage()
-    
+
     # Fallback without OpenTelemetry
     try:
         import psutil
+
         memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
+        disk = psutil.disk_usage("/")
         return {
             "psutil_available": True,
             "cpu_percent": psutil.cpu_percent(),
@@ -491,7 +642,7 @@ async def get_resources():
     except ImportError:
         return {
             "psutil_available": False,
-            "message": "psutil not installed. Run: pip install psutil"
+            "message": "psutil not installed. Run: pip install psutil",
         }
 
 
@@ -499,6 +650,7 @@ async def get_resources():
 async def readiness_check(db: AsyncSession = Depends(get_db)):
     """Readiness probe - checks database connection."""
     from sqlalchemy import text
+
     try:
         await db.execute(text("SELECT 1"))
         return {"status": "ready", "database": "connected"}
@@ -516,44 +668,39 @@ async def liveness_check():
 # Task Progress WebSocket
 # ============================================================================
 
+
 @app.websocket("/ws/tasks/{tenant_id}")
 async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str):
     """
     Task 진행률 및 완료 알림 WebSocket 엔드포인트.
-    
+
     클라이언트는 연결 후 특정 task_id를 구독할 수 있습니다:
     - {"action": "subscribe", "task_id": "..."} - 특정 Task 구독
     - {"action": "subscribe", "task_id": "*"} - 모든 Task 구독
     - {"action": "unsubscribe", "task_id": "..."} - 구독 해제
-    
+
     서버는 다음 메시지를 전송합니다:
     - {"type": "task_progress", "task_id": "...", "progress": 50.0, "message": "..."}
     - {"type": "task_completed", "task_id": "...", "status": "completed", "result": {...}}
     - {"type": "task_completed", "task_id": "...", "status": "failed", "error": "..."}
     """
     await task_ws_manager.connect(websocket, tenant_id)
-    
+
     try:
         while True:
             data = await websocket.receive_json()
             action = data.get("action")
             task_id = data.get("task_id")
-            
+
             if action == "subscribe" and task_id:
                 task_ws_manager.subscribe(websocket, task_id)
-                await websocket.send_json({
-                    "type": "subscribed",
-                    "task_id": task_id
-                })
+                await websocket.send_json({"type": "subscribed", "task_id": task_id})
             elif action == "unsubscribe" and task_id:
                 task_ws_manager.unsubscribe(websocket, task_id)
-                await websocket.send_json({
-                    "type": "unsubscribed",
-                    "task_id": task_id
-                })
+                await websocket.send_json({"type": "unsubscribed", "task_id": task_id})
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
-                
+
     except WebSocketDisconnect:
         task_ws_manager.disconnect(websocket, tenant_id)
     except Exception as e:
@@ -565,15 +712,13 @@ async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str):
 @app.get("/internal/ws-stats")
 async def get_websocket_stats():
     """WebSocket 연결 통계."""
-    return {
-        "total_connections": task_ws_manager.get_connection_count(),
-        "status": "ok"
-    }
+    return {"total_connections": task_ws_manager.get_connection_count(), "status": "ok"}
 
 
 # ============================================================================
 # Data Loading Endpoints
 # ============================================================================
+
 
 class UrlLoadRequest(BaseModel):
     url: str
@@ -582,7 +727,7 @@ class UrlLoadRequest(BaseModel):
 def get_mock_data_info(path: str):
     """Return mock data info for known datasets when Orange3 is not available."""
     path_lower = path.lower()
-    
+
     if "iris" in path_lower:
         return {
             "name": "Iris",
@@ -594,12 +739,37 @@ def get_mock_data_info(path: str):
             "classValues": 3,
             "metaAttributes": 0,
             "columns": [
-                {"name": "sepal length", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "sepal width", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "petal length", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "petal width", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "iris", "type": "categorical", "role": "target", "values": "Iris-setosa, Iris-versicolor, Iris-virginica"}
-            ]
+                {
+                    "name": "sepal length",
+                    "type": "numeric",
+                    "role": "feature",
+                    "values": "",
+                },
+                {
+                    "name": "sepal width",
+                    "type": "numeric",
+                    "role": "feature",
+                    "values": "",
+                },
+                {
+                    "name": "petal length",
+                    "type": "numeric",
+                    "role": "feature",
+                    "values": "",
+                },
+                {
+                    "name": "petal width",
+                    "type": "numeric",
+                    "role": "feature",
+                    "values": "",
+                },
+                {
+                    "name": "iris",
+                    "type": "categorical",
+                    "role": "target",
+                    "values": "Iris-setosa, Iris-versicolor, Iris-virginica",
+                },
+            ],
         }
     elif "titanic" in path_lower:
         return {
@@ -612,15 +782,35 @@ def get_mock_data_info(path: str):
             "classValues": 2,
             "metaAttributes": 0,
             "columns": [
-                {"name": "pclass", "type": "categorical", "role": "feature", "values": "first, second, third"},
-                {"name": "sex", "type": "categorical", "role": "feature", "values": "female, male"},
+                {
+                    "name": "pclass",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "first, second, third",
+                },
+                {
+                    "name": "sex",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "female, male",
+                },
                 {"name": "age", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "sibsp", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "parch", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "fare", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "embarked", "type": "categorical", "role": "feature", "values": "C, Q, S"},
-                {"name": "survived", "type": "categorical", "role": "target", "values": "no, yes"}
-            ]
+                {
+                    "name": "embarked",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "C, Q, S",
+                },
+                {
+                    "name": "survived",
+                    "type": "categorical",
+                    "role": "target",
+                    "values": "no, yes",
+                },
+            ],
         }
     elif "housing" in path_lower:
         return {
@@ -636,7 +826,12 @@ def get_mock_data_info(path: str):
                 {"name": "CRIM", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "ZN", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "INDUS", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "CHAS", "type": "categorical", "role": "feature", "values": "0, 1"},
+                {
+                    "name": "CHAS",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
                 {"name": "NOX", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "RM", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "AGE", "type": "numeric", "role": "feature", "values": ""},
@@ -646,8 +841,8 @@ def get_mock_data_info(path: str):
                 {"name": "PTRATIO", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "B", "type": "numeric", "role": "feature", "values": ""},
                 {"name": "LSTAT", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "MEDV", "type": "numeric", "role": "target", "values": ""}
-            ]
+                {"name": "MEDV", "type": "numeric", "role": "target", "values": ""},
+            ],
         }
     elif "zoo" in path_lower:
         return {
@@ -660,27 +855,107 @@ def get_mock_data_info(path: str):
             "classValues": 7,
             "metaAttributes": 1,
             "columns": [
-                {"name": "hair", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "feathers", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "eggs", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "milk", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "airborne", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "aquatic", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "predator", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "toothed", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "backbone", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "breathes", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "venomous", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "fins", "type": "categorical", "role": "feature", "values": "0, 1"},
+                {
+                    "name": "hair",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "feathers",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "eggs",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "milk",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "airborne",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "aquatic",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "predator",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "toothed",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "backbone",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "breathes",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "venomous",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "fins",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
                 {"name": "legs", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "tail", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "domestic", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "catsize", "type": "categorical", "role": "feature", "values": "0, 1"},
-                {"name": "type", "type": "categorical", "role": "target", "values": "mammal, bird, reptile, fish, amphibian, insect, invertebrate"},
-                {"name": "name", "type": "categorical", "role": "meta", "values": ""}
-            ]
+                {
+                    "name": "tail",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "domestic",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "catsize",
+                    "type": "categorical",
+                    "role": "feature",
+                    "values": "0, 1",
+                },
+                {
+                    "name": "type",
+                    "type": "categorical",
+                    "role": "target",
+                    "values": "mammal, bird, reptile, fish, amphibian, insect, invertebrate",
+                },
+                {"name": "name", "type": "categorical", "role": "meta", "values": ""},
+            ],
         }
-    
+
     # Generic fallback for unknown datasets
     filename = path.split("/")[-1]
     return {
@@ -698,8 +973,13 @@ def get_mock_data_info(path: str):
             {"name": "feature3", "type": "numeric", "role": "feature", "values": ""},
             {"name": "feature4", "type": "numeric", "role": "feature", "values": ""},
             {"name": "feature5", "type": "numeric", "role": "feature", "values": ""},
-            {"name": "class", "type": "categorical", "role": "target", "values": "Class A, Class B"}
-        ]
+            {
+                "name": "class",
+                "type": "categorical",
+                "role": "target",
+                "values": "Class A, Class B",
+            },
+        ],
     }
 
 
@@ -708,12 +988,12 @@ async def load_data_from_path(
     path: str,
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
     offset: int = 0,
-    limit: Optional[int] = None
+    limit: Optional[int] = None,
 ):
     """Load data from a local file path or file ID.
-    
+
     [BE-PERF-001] Pagination support added for large datasets.
-    
+
     Args:
         path: File path or file ID (file:{uuid})
         x_tenant_id: Tenant ID header
@@ -722,20 +1002,20 @@ async def load_data_from_path(
     """
     import tempfile
     from .core.file_storage import get_file, get_file_metadata
-    
+
     # If Orange3 not available, return mock data
     if not ORANGE_AVAILABLE:
         return get_mock_data_info(path)
-    
+
     actual_path = path
     temp_file = None
     metadata = None  # Will be set for file: paths
-    
+
     # Check if it's a file ID reference (file:{uuid})
     if path.startswith("file:"):
         file_id = path.replace("file:", "")
         logger.info(f"Loading file by ID: {file_id}, tenant: {x_tenant_id}")
-        
+
         # Get file metadata and content from storage
         metadata = await get_file_metadata(file_id, x_tenant_id)
         if not metadata:
@@ -752,9 +1032,9 @@ async def load_data_from_path(
                 "classValues": None,
                 "metaAttributes": 0,
                 "columns": [],
-                "error": f"File not found: {file_id}"
+                "error": f"File not found: {file_id}",
             }
-        
+
         content = await get_file(file_id, x_tenant_id)
         if not content:
             logger.warning(f"File content not found: {file_id}")
@@ -769,17 +1049,17 @@ async def load_data_from_path(
                 "classValues": None,
                 "metaAttributes": 0,
                 "columns": [],
-                "error": f"File content not found: {file_id}"
+                "error": f"File content not found: {file_id}",
             }
-        
+
         # Write to temp file for Orange3 to load
-        suffix = Path(metadata.filename).suffix or '.tab'
+        suffix = Path(metadata.filename).suffix or ".tab"
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         temp_file.write(content)
         temp_file.close()
         actual_path = temp_file.name
         logger.info(f"Created temp file: {actual_path} for {metadata.filename}")
-    
+
     # Check if it's an uploaded file (legacy path)
     elif path.startswith("uploads/"):
         upload_dir = get_upload_dir()
@@ -791,77 +1071,92 @@ async def load_data_from_path(
         # e.g., "datasets/iris.tab" -> "iris"
         dataset_name = path.replace("datasets/", "").split(".")[0]
         actual_path = dataset_name
-    
+
     try:
         from Orange.data import Table
-        
+
         # Try to load the data
         data = Table(actual_path)
-        
+
         # Get column info
         columns = []
-        
+
         # Features
         for var in data.domain.attributes:
-            columns.append({
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "feature",
-                "values": ", ".join(var.values) if hasattr(var, 'values') and var.values else ""
-            })
-        
+            columns.append(
+                {
+                    "name": var.name,
+                    "type": "numeric" if var.is_continuous else "categorical",
+                    "role": "feature",
+                    "values": ", ".join(var.values)
+                    if hasattr(var, "values") and var.values
+                    else "",
+                }
+            )
+
         # Target
         if data.domain.class_var:
             var = data.domain.class_var
-            columns.append({
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "target",
-                "values": ", ".join(var.values) if hasattr(var, 'values') and var.values else ""
-            })
-        
+            columns.append(
+                {
+                    "name": var.name,
+                    "type": "numeric" if var.is_continuous else "categorical",
+                    "role": "target",
+                    "values": ", ".join(var.values)
+                    if hasattr(var, "values") and var.values
+                    else "",
+                }
+            )
+
         # Meta
         for var in data.domain.metas:
-            columns.append({
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "meta",
-                "values": ""
-            })
-        
+            columns.append(
+                {
+                    "name": var.name,
+                    "type": "numeric" if var.is_continuous else "categorical",
+                    "role": "meta",
+                    "values": "",
+                }
+            )
+
         # --- Phase 4: Load metadata overrides ---
         from .core.config import get_tenant_upload_dir
+
         file_id_for_meta = path
         if path.startswith("file:"):
             file_id_for_meta = path.replace("file:", "")
         elif path.startswith("uploads/"):
             file_id_for_meta = path.replace("uploads/", "")
-            
+
         upload_dir = get_tenant_upload_dir(x_tenant_id or "default")
         metadata_path = upload_dir / f"{file_id_for_meta}.metadata.json"
-        
+
         if metadata_path.exists():
             try:
                 import json
-                with open(metadata_path, 'r', encoding='utf-8') as f:
+
+                with open(metadata_path, "r", encoding="utf-8") as f:
                     metadata_overrides = json.load(f)
                     # We match by original index or name? Name is safer if columns haven't changed.
                     # Metadata stores a list of columns.
-                    meta_cols = {col['name']: col for col in metadata_overrides.get('columns', [])}
-                    
+                    meta_cols = {
+                        col["name"]: col
+                        for col in metadata_overrides.get("columns", [])
+                    }
+
                     for col in columns:
-                        if col['name'] in meta_cols:
-                            override = meta_cols[col['name']]
+                        if col["name"] in meta_cols:
+                            override = meta_cols[col["name"]]
                             # Apply overrides
-                            col['type'] = override.get('type', col['type'])
-                            col['role'] = override.get('role', col['role'])
-                            # Note: name override is tricky if we use name as key, 
+                            col["type"] = override.get("type", col["type"])
+                            col["role"] = override.get("role", col["role"])
+                            # Note: name override is tricky if we use name as key,
                             # but original name is what we have in 'columns'
                 logger.info(f"Applied column metadata overrides from {metadata_path}")
             except Exception as e:
                 logger.warning(f"Failed to load metadata overrides: {e}")
         # ----------------------------------------
-        
+
         # Get display name (prefer original filename from metadata)
         if path.startswith("file:") and metadata:
             # Use original_filename which stores the actual uploaded filename
@@ -869,43 +1164,43 @@ async def load_data_from_path(
             display_name = Path(original_name).stem
         else:
             display_name = data.name or path.split("/")[-1].split(":")[-1]
-        
+
         # [BE-PERF-001] Apply pagination if specified
         total_rows = len(data)
         paginated_data = None
         pagination = None
-        
+
         if limit is not None and limit > 0:
             # Return paginated data rows
             end_idx = min(offset + limit, total_rows)
             paginated_rows = data[offset:end_idx]
-            
+
             # Convert to list of lists for JSON serialization
             paginated_data = []
             for row in paginated_rows:
                 row_data = []
                 # Features
                 for val in row:
-                    if hasattr(val, 'is_nan') and val.is_nan():
+                    if hasattr(val, "is_nan") and val.is_nan():
                         row_data.append(None)
                     else:
                         row_data.append(float(val) if not isinstance(val, str) else val)
                 # Class
                 if data.domain.class_var:
                     class_val = row.get_class()
-                    if hasattr(class_val, 'is_nan') and class_val.is_nan():
+                    if hasattr(class_val, "is_nan") and class_val.is_nan():
                         row_data.append(None)
                     else:
                         row_data.append(str(class_val))
                 paginated_data.append(row_data)
-            
+
             pagination = {
                 "offset": offset,
                 "limit": limit,
                 "total": total_rows,
-                "hasMore": end_idx < total_rows
+                "hasMore": end_idx < total_rows,
             }
-        
+
         response = {
             "name": display_name,
             "description": "",
@@ -913,16 +1208,22 @@ async def load_data_from_path(
             "instances": total_rows,
             "features": len(data.domain.attributes),
             "missingValues": data.has_missing(),
-            "classType": "Classification" if data.domain.class_var and not data.domain.class_var.is_continuous else "Regression" if data.domain.class_var else "None",
-            "classValues": len(data.domain.class_var.values) if data.domain.class_var and hasattr(data.domain.class_var, 'values') else None,
+            "classType": "Classification"
+            if data.domain.class_var and not data.domain.class_var.is_continuous
+            else "Regression"
+            if data.domain.class_var
+            else "None",
+            "classValues": len(data.domain.class_var.values)
+            if data.domain.class_var and hasattr(data.domain.class_var, "values")
+            else None,
             "metaAttributes": len(data.domain.metas),
-            "columns": columns
+            "columns": columns,
         }
-        
+
         if pagination:
             response["data"] = paginated_data
             response["pagination"] = pagination
-        
+
         return response
     except Exception as e:
         logger.error(f"Failed to load data from {actual_path}: {e}")
@@ -939,73 +1240,99 @@ async def load_data_from_path(
 
 @api_v1.post("/data/load-url", tags=["Data"])
 async def load_data_from_url(request: UrlLoadRequest):
-    """Load data from a URL."""
+    """
+    Load data from a URL.
+
+    Security: Validates URL to prevent SSRF attacks.
+    """
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=501, detail="Orange3 not available")
-    
+
+    # Validate URL for SSRF
+    url = request.url
+    is_valid, error_msg = validate_url_for_ssrf(url)
+    if not is_valid:
+        logger.warning(f"SSRF attempt blocked: {url} - {error_msg}")
+        raise HTTPException(status_code=403, detail=f"URL not allowed: {error_msg}")
+
     try:
         from Orange.data import Table
         import tempfile
         import urllib.request
         import os
-        
-        url = request.url
-        
+
         # Download to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
+        logger.info(f"Downloading from validated URL: {url}")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
             urllib.request.urlretrieve(url, tmp.name)
             tmp_path = tmp.name
-        
+
         try:
             # Try to load the data
             data = Table(tmp_path)
-            
+
             # Get column info
             columns = []
-            
+
             # Features
             for var in data.domain.attributes:
-                columns.append({
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "feature",
-                    "values": ", ".join(var.values) if hasattr(var, 'values') and var.values else ""
-                })
-            
+                columns.append(
+                    {
+                        "name": var.name,
+                        "type": "numeric" if var.is_continuous else "categorical",
+                        "role": "feature",
+                        "values": ", ".join(var.values)
+                        if hasattr(var, "values") and var.values
+                        else "",
+                    }
+                )
+
             # Target
             if data.domain.class_var:
                 var = data.domain.class_var
-                columns.append({
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "target",
-                    "values": ", ".join(var.values) if hasattr(var, 'values') and var.values else ""
-                })
-            
+                columns.append(
+                    {
+                        "name": var.name,
+                        "type": "numeric" if var.is_continuous else "categorical",
+                        "role": "target",
+                        "values": ", ".join(var.values)
+                        if hasattr(var, "values") and var.values
+                        else "",
+                    }
+                )
+
             # Meta
             for var in data.domain.metas:
-                columns.append({
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "meta",
-                    "values": ""
-                })
-            
+                columns.append(
+                    {
+                        "name": var.name,
+                        "type": "numeric" if var.is_continuous else "categorical",
+                        "role": "meta",
+                        "values": "",
+                    }
+                )
+
             return {
                 "name": url.split("/")[-1],
                 "description": f"Loaded from {url}",
                 "instances": len(data),
                 "features": len(data.domain.attributes),
                 "missingValues": data.has_missing(),
-                "classType": "Classification" if data.domain.class_var and not data.domain.class_var.is_continuous else "Regression" if data.domain.class_var else "None",
-                "classValues": len(data.domain.class_var.values) if data.domain.class_var and hasattr(data.domain.class_var, 'values') else None,
+                "classType": "Classification"
+                if data.domain.class_var and not data.domain.class_var.is_continuous
+                else "Regression"
+                if data.domain.class_var
+                else "None",
+                "classValues": len(data.domain.class_var.values)
+                if data.domain.class_var and hasattr(data.domain.class_var, "values")
+                else None,
                 "metaAttributes": len(data.domain.metas),
-                "columns": columns
+                "columns": columns,
             }
         finally:
             # Clean up temp file
             os.unlink(tmp_path)
-            
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1013,6 +1340,7 @@ async def load_data_from_url(request: UrlLoadRequest):
 # ============================================================================
 # Legacy Endpoints
 # ============================================================================
+
 
 @app.get("/api/widgets")
 async def legacy_widgets():
@@ -1065,6 +1393,7 @@ api_v1.include_router(widget_registry_router)
 
 app.include_router(api_v1)
 
+
 # WebSocket endpoint (registered directly on app, not api_v1)
 @app.websocket("/api/v1/workflows/{workflow_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
@@ -1074,4 +1403,14 @@ async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    trusted_proxies = os.environ.get(
+        "TRUSTED_PROXIES", "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    )
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        proxy_headers=True,
+        forwarded_allow_ips=trusted_proxies,
+    )
