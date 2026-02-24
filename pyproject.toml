@@ -1,6 +1,6 @@
 [project]
 name = "orange3-web-backend"
-version = "0.34.1"
+version = "0.34.3"
 description = "Orange3 Web Backend - FastAPI server with Orange3 data mining widgets"
 requires-python = ">=3.12"
 authors = [
