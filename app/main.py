@@ -30,7 +30,7 @@ import threading
 from urllib.parse import urlparse
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, Any
+from typing import AsyncIterator, Dict, List, Optional, Any
 import json
 import uuid
 import time
@@ -135,8 +135,8 @@ try:
 
     ORANGE_AVAILABLE = ORANGE3_AVAILABLE
 except ImportError as e:
-    print(f"Warning: Could not import Orange3 adapters: {e}")
-    print("Using fallback models")
+    logger.warning(f"Could not import Orange3 adapters: {e}")
+    logger.info("Using fallback models")
     ORANGE_AVAILABLE = False
     ORANGE3_AVAILABLE = False
 
@@ -245,7 +245,7 @@ _registry_initialized = False
 _registry_lock = threading.Lock()
 
 
-def get_registry():
+def get_registry() -> Optional[Any]:
     """Get or create the widget registry (thread-safe singleton)."""
     global _registry, _registry_initialized
     if _registry_initialized:
@@ -284,31 +284,33 @@ def _init_telemetry(fastapi_app: FastAPI) -> None:
             log_level=os.getenv("LOG_LEVEL", "INFO"),
         )
         init_telemetry(fastapi_app, config)
-        print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
+        logger.info(f"OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
 
 
 async def _init_database() -> None:
     """Initialize database tables."""
-    print("\n📦 Initializing database...")
+    logger.info("Initializing database...")
     await init_db()
-    print("   Database ready (SQLite with WAL mode)")
+    logger.info("Database ready (SQLite with WAL mode)")
 
 
 def _init_registry() -> None:
     """Pre-load widget registry and wire up router dependencies."""
     availability = get_availability()
-    print(
-        f"\n🍊 Orange3: {'✓ Available' if availability.get('orange3') else '✗ Not available'}"
+    logger.info(
+        f"Orange3: {'Available' if availability.get('orange3') else 'Not available'}"
     )
 
     if not availability.get("orange3"):
-        print("   Install with: pip install Orange3")
+        logger.info("Install with: pip install Orange3")
 
     registry = get_registry()
     if registry:
         categories = registry.list_categories()
         widgets = registry.list_widgets()
-        print(f"\n📊 Discovered {len(widgets)} widgets in {len(categories)} categories")
+        logger.info(
+            f"Discovered {len(widgets)} widgets in {len(categories)} categories"
+        )
 
     set_registry_getter(get_registry)
     set_widget_registry_getter(get_registry)
@@ -331,7 +333,7 @@ async def _init_task_worker() -> bool:
     import app.tasks  # noqa: F401
 
     # Wire WebSocket callbacks for task progress/completion
-    async def on_progress(task_id: str, progress: float, message: str = None):
+    async def on_progress(task_id: str, progress: float, message: str = None) -> None:
         from .core.task_queue import get_task_status
 
         task_info = await get_task_status(task_id)
@@ -340,7 +342,7 @@ async def _init_task_worker() -> bool:
                 task_id, task_info["tenant_id"], progress, message
             )
 
-    async def on_completion(task_id: str, status: str, result=None, error=None):
+    async def on_completion(task_id: str, status: str, result: Any = None, error: str = None) -> None:
         from .core.task_queue import get_task_status
 
         task_info = await get_task_status(task_id)
@@ -354,7 +356,7 @@ async def _init_task_worker() -> bool:
 
     await start_worker(poll_interval=1.0)
     await cleanup_stale_tasks(timeout_minutes=30)
-    print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
+    logger.info("Task Queue worker started (WebSocket notifications enabled)")
     return True
 
 
@@ -363,15 +365,15 @@ async def _init_mdns(app_config) -> Optional[Any]:
     mdns_config = app_config.mdns
 
     if not mdns_config.enabled:
-        print("\n📡 mDNS disabled in configuration")
+        logger.info("mDNS disabled in configuration")
         return None
 
     if not is_mdns_available():
-        print("\n📡 mDNS disabled (zeroconf not installed)")
-        print("   Install with: pip install zeroconf")
+        logger.info("mDNS disabled (zeroconf not installed)")
+        logger.info("Install with: pip install zeroconf")
         return None
 
-    print("\n📡 mDNS Service Discovery...")
+    logger.info("Starting mDNS Service Discovery...")
 
     service_type = mdns_config.service_type
     if not service_type.endswith(".local."):
@@ -400,20 +402,22 @@ async def _init_mdns(app_config) -> Optional[Any]:
 
     await mdns_service.register(txt_properties)
 
-    print(f"   Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}")
+    logger.info(
+        f"mDNS registered - Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}"
+    )
     if mdns_config.interface:
-        print(f"   Interface: {mdns_config.interface}")
+        logger.info(f"mDNS interface: {mdns_config.interface}")
 
     return mdns_service
 
 
 @asynccontextmanager
-async def lifespan(fastapi_app: FastAPI):
+async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
 
-    print("=" * 60)
-    print("Starting Orange3 Web Backend...")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Starting Orange3 Web Backend...")
+    logger.info("=" * 60)
 
     _init_telemetry(fastapi_app)
 
@@ -423,37 +427,37 @@ async def lifespan(fastapi_app: FastAPI):
     _init_registry()
 
     set_websocket_manager(task_ws_manager)
-    print("\n🔒 Async locks enabled for concurrent access protection")
+    logger.info("Async locks enabled for concurrent access protection")
 
     task_worker_enabled = await _init_task_worker()
 
     mdns_service = await _init_mdns(app_config)
     fastapi_app.state.mdns_service = mdns_service
 
-    print("=" * 60)
+    logger.info("=" * 60)
 
     yield
 
     # Cleanup
     if fastapi_app.state.mdns_service:
-        print("\n📡 Unregistering mDNS service...")
+        logger.info("Unregistering mDNS service...")
         await fastapi_app.state.mdns_service.unregister()
 
-    print("\nShutting down Orange3 Web Backend...")
+    logger.info("Shutting down Orange3 Web Backend...")
 
     if task_worker_enabled:
         from .core.task_queue import stop_worker
 
         await stop_worker()
-        print("Task Queue worker stopped.")
+        logger.info("Task Queue worker stopped.")
 
     from .core.data_utils import shutdown_executors
 
     shutdown_executors()
-    print("Executor pools shutdown.")
+    logger.info("Executor pools shutdown.")
 
     await close_db()
-    print("Database connections closed.")
+    logger.info("Database connections closed.")
 
 
 # ============================================================================
@@ -513,10 +517,10 @@ class ProxyHeadersMiddleware:
         if cidr.strip()
     ]
 
-    def __init__(self, app):
+    def __init__(self, app) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope, receive, send) -> None:
         if scope["type"] in ("http", "websocket"):
             client = scope.get("client")
             if client:
@@ -565,7 +569,7 @@ api_v1 = APIRouter(prefix="/api/v1")
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict:
     """Health check endpoint."""
     import time
 
@@ -613,7 +617,7 @@ async def health_check():
 
 
 @app.get("/internal/metrics")
-async def get_metrics():
+async def get_metrics() -> dict:
     """Get OpenTelemetry metrics summary."""
     if OTEL_AVAILABLE and get_telemetry:
         telemetry = get_telemetry()
@@ -628,7 +632,7 @@ async def get_metrics():
 
 
 @app.get("/internal/logs")
-async def get_logs(limit: int = 100):
+async def get_logs(limit: int = 100) -> dict:
     """Get recent log entries."""
     if OTEL_AVAILABLE and get_telemetry:
         telemetry = get_telemetry()
@@ -638,7 +642,7 @@ async def get_logs(limit: int = 100):
 
 
 @app.get("/internal/resources")
-async def get_resources():
+async def get_resources() -> dict:
     """Get current resource usage (CPU, Memory, Disk, Throughput)."""
     if OTEL_AVAILABLE and get_telemetry:
         telemetry = get_telemetry()
@@ -667,7 +671,7 @@ async def get_resources():
 
 
 @app.get("/health/ready")
-async def readiness_check(db: AsyncSession = Depends(get_db)):
+async def readiness_check(db: AsyncSession = Depends(get_db)) -> dict:
     """Readiness probe - checks database connection."""
     from sqlalchemy import text
 
@@ -679,7 +683,7 @@ async def readiness_check(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/health/live")
-async def liveness_check():
+async def liveness_check() -> dict:
     """Liveness probe - checks if service is alive."""
     return {"status": "alive"}
 
@@ -690,7 +694,7 @@ async def liveness_check():
 
 
 @app.websocket("/ws/tasks/{tenant_id}")
-async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str):
+async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str) -> None:
     """
     Task 진행률 및 완료 알림 WebSocket 엔드포인트.
 
@@ -730,7 +734,7 @@ async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str):
 
 # WebSocket 연결 수 조회 엔드포인트
 @app.get("/internal/ws-stats")
-async def get_websocket_stats():
+async def get_websocket_stats() -> dict:
     """WebSocket 연결 통계."""
     return {"total_connections": task_ws_manager.get_connection_count(), "status": "ok"}
 
@@ -782,13 +786,140 @@ def _extract_domain_columns(domain) -> list[dict]:
     return columns
 
 
+async def _resolve_file_path(
+    path: str, tenant_id: Optional[str]
+) -> tuple[str, Any, Any]:
+    """Resolve path to actual filesystem path, returning (actual_path, temp_file, metadata).
+
+    Handles file: prefix (storage lookup), uploads/ prefix, and datasets/ prefix.
+    Callers are responsible for cleaning up temp_file if not None.
+    """
+    import tempfile
+    from .core.file_storage import get_file, get_file_metadata
+
+    actual_path = path
+    temp_file = None
+    metadata = None
+
+    if path.startswith("file:"):
+        file_id = path.replace("file:", "")
+        logger.info(f"Loading file by ID: {file_id}, tenant: {tenant_id}")
+
+        metadata = await get_file_metadata(file_id, tenant_id)
+        if not metadata:
+            return path, None, None  # Signal: file not found
+
+        content = await get_file(file_id, tenant_id)
+        if not content:
+            return path, None, metadata  # Signal: content not found
+
+        suffix = Path(metadata.filename).suffix or ".tab"
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_file.write(content)
+        temp_file.close()
+        actual_path = temp_file.name
+        logger.info(f"Created temp file: {actual_path} for {metadata.filename}")
+
+    elif path.startswith("uploads/"):
+        from .core.config import get_upload_dir as _get_upload_dir
+
+        upload_dir = _get_upload_dir()
+        full_path = upload_dir / path.replace("uploads/", "")
+        if full_path.exists():
+            actual_path = str(full_path)
+
+    elif path.startswith("datasets/"):
+        # Built-in Orange3 datasets — strip path prefix and extension
+        actual_path = path.replace("datasets/", "").split(".")[0]
+
+    return actual_path, temp_file, metadata
+
+
+def _apply_metadata_overrides(
+    columns: list, path: str, tenant_id: Optional[str]
+) -> list:
+    """Read .metadata.json sidecar for the given path and apply column type/role overrides."""
+    from .core.config import get_tenant_upload_dir
+
+    file_id_for_meta = path
+    if path.startswith("file:"):
+        file_id_for_meta = path.replace("file:", "")
+    elif path.startswith("uploads/"):
+        file_id_for_meta = path.replace("uploads/", "")
+
+    upload_dir = get_tenant_upload_dir(tenant_id or "default")
+    metadata_path = upload_dir / f"{file_id_for_meta}.metadata.json"
+
+    if not metadata_path.exists():
+        return columns
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata_overrides = json.load(f)
+
+        meta_cols = {col["name"]: col for col in metadata_overrides.get("columns", [])}
+
+        for col in columns:
+            if col["name"] in meta_cols:
+                override = meta_cols[col["name"]]
+                col["type"] = override.get("type", col["type"])
+                col["role"] = override.get("role", col["role"])
+
+        logger.info(f"Applied column metadata overrides from {metadata_path}")
+    except Exception as e:
+        logger.warning(f"Failed to load metadata overrides: {e}")
+
+    return columns
+
+
+def _paginate_orange_data(
+    data: Any, offset: int, limit: int
+) -> tuple[list | None, dict | None]:
+    """Slice Orange Table rows and build a pagination dict.
+
+    Returns (paginated_rows_list, pagination_dict), or (None, None) when limit <= 0.
+    """
+    total_rows = len(data)
+
+    if limit is None or limit <= 0:
+        return None, None
+
+    end_idx = min(offset + limit, total_rows)
+    paginated_rows = data[offset:end_idx]
+
+    paginated_data = []
+    for row in paginated_rows:
+        row_data = []
+        for val in row:
+            if hasattr(val, "is_nan") and val.is_nan():
+                row_data.append(None)
+            else:
+                row_data.append(float(val) if not isinstance(val, str) else val)
+        if data.domain.class_var:
+            class_val = row.get_class()
+            if hasattr(class_val, "is_nan") and class_val.is_nan():
+                row_data.append(None)
+            else:
+                row_data.append(str(class_val))
+        paginated_data.append(row_data)
+
+    pagination = {
+        "offset": offset,
+        "limit": limit,
+        "total": total_rows,
+        "hasMore": end_idx < total_rows,
+    }
+
+    return paginated_data, pagination
+
+
 @api_v1.get("/data/load", tags=["Data"])
 async def load_data_from_path(
     path: str,
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
     offset: int = 0,
     limit: Optional[int] = None,
-):
+) -> dict:
     """Load data from a local file path or file ID.
 
     [BE-PERF-001] Pagination support added for large datasets.
@@ -799,174 +930,67 @@ async def load_data_from_path(
         offset: Starting row index (default: 0)
         limit: Maximum number of rows to return (default: None = all rows)
     """
-    import tempfile
-    from .core.file_storage import get_file, get_file_metadata
-
     # If Orange3 not available, return mock data
     if not ORANGE_AVAILABLE:
         return get_mock_data_info(path)
 
-    actual_path = path
-    temp_file = None
-    metadata = None  # Will be set for file: paths
+    actual_path, temp_file, metadata = await _resolve_file_path(path, x_tenant_id)
 
-    # Check if it's a file ID reference (file:{uuid})
-    if path.startswith("file:"):
+    # Handle file-not-found / content-not-found cases from _resolve_file_path
+    if path.startswith("file:") and metadata is None:
+        return {
+            "name": "File Not Found",
+            "description": "파일을 찾을 수 없습니다. 파일을 다시 업로드해주세요.",
+            "path": path,
+            "instances": 0,
+            "features": 0,
+            "missingValues": False,
+            "classType": "None",
+            "classValues": None,
+            "metaAttributes": 0,
+            "columns": [],
+            "error": f"File not found: {path.replace('file:', '')}",
+        }
+
+    if path.startswith("file:") and temp_file is None and metadata is not None:
         file_id = path.replace("file:", "")
-        logger.info(f"Loading file by ID: {file_id}, tenant: {x_tenant_id}")
-
-        # Get file metadata and content from storage
-        metadata = await get_file_metadata(file_id, x_tenant_id)
-        if not metadata:
-            logger.warning(f"File not found: {file_id}")
-            # Return error info instead of mock data
-            return {
-                "name": "File Not Found",
-                "description": f"파일을 찾을 수 없습니다. 파일을 다시 업로드해주세요.",
-                "path": path,
-                "instances": 0,
-                "features": 0,
-                "missingValues": False,
-                "classType": "None",
-                "classValues": None,
-                "metaAttributes": 0,
-                "columns": [],
-                "error": f"File not found: {file_id}",
-            }
-
-        content = await get_file(file_id, x_tenant_id)
-        if not content:
-            logger.warning(f"File content not found: {file_id}")
-            return {
-                "name": metadata.original_filename or metadata.filename,
-                "description": "파일 내용을 읽을 수 없습니다.",
-                "path": path,
-                "instances": 0,
-                "features": 0,
-                "missingValues": False,
-                "classType": "None",
-                "classValues": None,
-                "metaAttributes": 0,
-                "columns": [],
-                "error": f"File content not found: {file_id}",
-            }
-
-        # Write to temp file for Orange3 to load
-        suffix = Path(metadata.filename).suffix or ".tab"
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_file.write(content)
-        temp_file.close()
-        actual_path = temp_file.name
-        logger.info(f"Created temp file: {actual_path} for {metadata.filename}")
-
-    # Check if it's an uploaded file (legacy path)
-    elif path.startswith("uploads/"):
-        upload_dir = get_upload_dir()
-        full_path = upload_dir / path.replace("uploads/", "")
-        if full_path.exists():
-            actual_path = str(full_path)
-    elif path.startswith("datasets/"):
-        # Built-in Orange3 datasets - extract just the name without extension
-        # e.g., "datasets/iris.tab" -> "iris"
-        dataset_name = path.replace("datasets/", "").split(".")[0]
-        actual_path = dataset_name
+        return {
+            "name": metadata.original_filename or metadata.filename,
+            "description": "파일 내용을 읽을 수 없습니다.",
+            "path": path,
+            "instances": 0,
+            "features": 0,
+            "missingValues": False,
+            "classType": "None",
+            "classValues": None,
+            "metaAttributes": 0,
+            "columns": [],
+            "error": f"File content not found: {file_id}",
+        }
 
     try:
         from Orange.data import Table
 
-        # Try to load the data
         data = Table(actual_path)
 
-        # Get column info
         columns = _extract_domain_columns(data.domain)
+        columns = _apply_metadata_overrides(columns, path, x_tenant_id)
 
-        # --- Phase 4: Load metadata overrides ---
-        from .core.config import get_tenant_upload_dir
-
-        file_id_for_meta = path
-        if path.startswith("file:"):
-            file_id_for_meta = path.replace("file:", "")
-        elif path.startswith("uploads/"):
-            file_id_for_meta = path.replace("uploads/", "")
-
-        upload_dir = get_tenant_upload_dir(x_tenant_id or "default")
-        metadata_path = upload_dir / f"{file_id_for_meta}.metadata.json"
-
-        if metadata_path.exists():
-            try:
-                import json
-
-                with open(metadata_path, "r", encoding="utf-8") as f:
-                    metadata_overrides = json.load(f)
-                    # We match by original index or name? Name is safer if columns haven't changed.
-                    # Metadata stores a list of columns.
-                    meta_cols = {
-                        col["name"]: col
-                        for col in metadata_overrides.get("columns", [])
-                    }
-
-                    for col in columns:
-                        if col["name"] in meta_cols:
-                            override = meta_cols[col["name"]]
-                            # Apply overrides
-                            col["type"] = override.get("type", col["type"])
-                            col["role"] = override.get("role", col["role"])
-                            # Note: name override is tricky if we use name as key,
-                            # but original name is what we have in 'columns'
-                logger.info(f"Applied column metadata overrides from {metadata_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load metadata overrides: {e}")
-        # ----------------------------------------
-
-        # Get display name (prefer original filename from metadata)
+        # Build display name
         if path.startswith("file:") and metadata:
-            # Use original_filename which stores the actual uploaded filename
             original_name = metadata.original_filename or metadata.filename
             display_name = Path(original_name).stem
         else:
             display_name = data.name or path.split("/")[-1].split(":")[-1]
 
         # [BE-PERF-001] Apply pagination if specified
-        total_rows = len(data)
-        paginated_data = None
-        pagination = None
-
-        if limit is not None and limit > 0:
-            # Return paginated data rows
-            end_idx = min(offset + limit, total_rows)
-            paginated_rows = data[offset:end_idx]
-
-            # Convert to list of lists for JSON serialization
-            paginated_data = []
-            for row in paginated_rows:
-                row_data = []
-                # Features
-                for val in row:
-                    if hasattr(val, "is_nan") and val.is_nan():
-                        row_data.append(None)
-                    else:
-                        row_data.append(float(val) if not isinstance(val, str) else val)
-                # Class
-                if data.domain.class_var:
-                    class_val = row.get_class()
-                    if hasattr(class_val, "is_nan") and class_val.is_nan():
-                        row_data.append(None)
-                    else:
-                        row_data.append(str(class_val))
-                paginated_data.append(row_data)
-
-            pagination = {
-                "offset": offset,
-                "limit": limit,
-                "total": total_rows,
-                "hasMore": end_idx < total_rows,
-            }
+        paginated_data, pagination = _paginate_orange_data(data, offset, limit or 0)
 
         response = {
             "name": display_name,
             "description": "",
-            "path": path,  # Return original path for reference
-            "instances": total_rows,
+            "path": path,
+            "instances": len(data),
             "features": len(data.domain.attributes),
             "missingValues": data.has_missing(),
             "classType": "Classification"
@@ -988,10 +1012,10 @@ async def load_data_from_path(
         return response
     except Exception as e:
         logger.error(f"Failed to load data from {actual_path}: {e}")
-        # Fallback to mock data on error
-        return get_mock_data_info(path)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load data from '{path}': {str(e)}"
+        )
     finally:
-        # Clean up temp file if created
         if temp_file and Path(temp_file.name).exists():
             try:
                 Path(temp_file.name).unlink()
@@ -1000,7 +1024,7 @@ async def load_data_from_path(
 
 
 @api_v1.post("/data/load-url", tags=["Data"])
-async def load_data_from_url(request: UrlLoadRequest):
+async def load_data_from_url(request: UrlLoadRequest) -> dict:
     """
     Load data from a URL.
 
@@ -1066,7 +1090,7 @@ async def load_data_from_url(request: UrlLoadRequest):
 
 
 @app.get("/api/widgets")
-async def legacy_widgets():
+async def legacy_widgets() -> dict:
     """Legacy endpoint for frontend compatibility."""
     return await legacy_widgets_handler()
 
@@ -1119,7 +1143,7 @@ app.include_router(api_v1)
 
 # WebSocket endpoint (registered directly on app, not api_v1)
 @app.websocket("/api/v1/workflows/{workflow_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
+async def websocket_endpoint(websocket: WebSocket, workflow_id: str) -> None:
     """WebSocket for real-time updates."""
     await workflow_ws_endpoint(websocket, workflow_id)
 

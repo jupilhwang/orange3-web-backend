@@ -114,7 +114,7 @@ async def run_in_thread(func: Callable[..., T], *args, **kwargs) -> T:
     return await loop.run_in_executor(pool, func, *args)
 
 
-def shutdown_executors():
+def shutdown_executors() -> None:
     """Shutdown all executor pools gracefully."""
     global _process_pool, _thread_pool
     

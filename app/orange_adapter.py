@@ -7,11 +7,15 @@ only adding a minimal web API layer on top.
 Orange3 includes orange-canvas-core and orange-widget-base as dependencies,
 so we only need to install Orange3.
 """
+
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 import json
 import base64
 import importlib.metadata
+import logging
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Orange3 Imports (includes canvas-core and widget-base as dependencies)
@@ -23,40 +27,46 @@ try:
     from Orange.widgets import widget_discovery
     from Orange.data import Table, Domain, Variable
     from Orange.widgets.widget import OWWidget
-    
+
     # From orange-canvas-core (installed with Orange3)
     from orangecanvas.scheme.scheme import Scheme
     from orangecanvas.scheme.node import SchemeNode
     from orangecanvas.scheme.link import SchemeLink, compatible_channels
     from orangecanvas.scheme.annotations import (
-        BaseSchemeAnnotation, SchemeTextAnnotation, SchemeArrowAnnotation
+        BaseSchemeAnnotation,
+        SchemeTextAnnotation,
+        SchemeArrowAnnotation,
     )
     from orangecanvas.scheme.readwrite import scheme_to_ows_stream, scheme_load
     from orangecanvas.registry import WidgetRegistry, WidgetDescription
     from orangecanvas.registry.description import (
-        CategoryDescription, InputSignal, OutputSignal
+        CategoryDescription,
+        InputSignal,
+        OutputSignal,
     )
-    
+
     # From orange-widget-base (installed with Orange3)
     from orangewidget.widget import OWBaseWidget
     from orangewidget.settings import Setting, SettingsHandler
     from orangewidget.workflow.discovery import WidgetDiscovery
-    
+
     ORANGE3_AVAILABLE = True
-    print("Orange3 loaded successfully")
-    
+    logger.info("Orange3 loaded successfully")
+
 except ImportError as e:
-    print(f"Warning: Orange3 not available: {e}")
-    print("Install with: pip install Orange3")
+    logger.warning(f"Orange3 not available: {e}")
+    logger.info("Install with: pip install Orange3")
 
 
 # =============================================================================
 # Web-friendly data classes
 # =============================================================================
 
+
 @dataclass
 class WebSchemeNode:
     """Web-friendly wrapper for SchemeNode."""
+
     id: str
     widget_id: str
     title: str
@@ -64,9 +74,9 @@ class WebSchemeNode:
     properties: Dict[str, Any] = field(default_factory=dict)
     state: int = 0
     progress: float = -1
-    
+
     @classmethod
-    def from_scheme_node(cls, node: 'SchemeNode') -> "WebSchemeNode":
+    def from_scheme_node(cls, node: "SchemeNode") -> "WebSchemeNode":
         """Create from existing SchemeNode."""
         return cls(
             id=str(id(node)),
@@ -75,9 +85,9 @@ class WebSchemeNode:
             position=node.position or (0, 0),
             properties=node.properties or {},
             state=int(node.state),
-            progress=node.progress
+            progress=node.progress,
         )
-    
+
     def to_dict(self) -> Dict:
         return {
             "id": self.id,
@@ -86,22 +96,23 @@ class WebSchemeNode:
             "position": {"x": self.position[0], "y": self.position[1]},
             "properties": self.properties,
             "state": self.state,
-            "progress": self.progress
+            "progress": self.progress,
         }
 
 
 @dataclass
 class WebSchemeLink:
     """Web-friendly wrapper for SchemeLink."""
+
     id: str
     source_node_id: str
     source_channel: str
     sink_node_id: str
     sink_channel: str
     enabled: bool = True
-    
+
     @classmethod
-    def from_scheme_link(cls, link: 'SchemeLink', node_id_map: Dict) -> "WebSchemeLink":
+    def from_scheme_link(cls, link: "SchemeLink", node_id_map: Dict) -> "WebSchemeLink":
         """Create from existing SchemeLink."""
         return cls(
             id=str(id(link)),
@@ -109,9 +120,9 @@ class WebSchemeLink:
             source_channel=link.source_channel.name if link.source_channel else "",
             sink_node_id=node_id_map.get(id(link.sink_node), ""),
             sink_channel=link.sink_channel.name if link.sink_channel else "",
-            enabled=link.enabled
+            enabled=link.enabled,
         )
-    
+
     def to_dict(self) -> Dict:
         return {
             "id": self.id,
@@ -119,13 +130,14 @@ class WebSchemeLink:
             "source_channel": self.source_channel,
             "sink_node_id": self.sink_node_id,
             "sink_channel": self.sink_channel,
-            "enabled": self.enabled
+            "enabled": self.enabled,
         }
 
 
 @dataclass
 class WebAnnotation:
     """Web-friendly wrapper for annotations."""
+
     id: str
     type: str
     rect: Optional[Tuple[float, float, float, float]] = None
@@ -135,9 +147,11 @@ class WebAnnotation:
     start_pos: Optional[Tuple[float, float]] = None
     end_pos: Optional[Tuple[float, float]] = None
     color: str = "#808080"
-    
+
     @classmethod
-    def from_scheme_annotation(cls, annotation: 'BaseSchemeAnnotation') -> "WebAnnotation":
+    def from_scheme_annotation(
+        cls, annotation: "BaseSchemeAnnotation"
+    ) -> "WebAnnotation":
         if isinstance(annotation, SchemeTextAnnotation):
             return cls(
                 id=str(id(annotation)),
@@ -145,7 +159,7 @@ class WebAnnotation:
                 rect=annotation.rect,
                 content=annotation.content,
                 content_type=annotation.content_type,
-                font=annotation.font
+                font=annotation.font,
             )
         elif isinstance(annotation, SchemeArrowAnnotation):
             return cls(
@@ -153,27 +167,37 @@ class WebAnnotation:
                 type="arrow",
                 start_pos=annotation.start_pos,
                 end_pos=annotation.end_pos,
-                color=annotation.color
+                color=annotation.color,
             )
         return cls(id=str(id(annotation)), type="unknown")
-    
+
     def to_dict(self) -> Dict:
         if self.type == "text":
             return {
                 "id": self.id,
                 "type": "text",
-                "rect": {"x": self.rect[0], "y": self.rect[1], 
-                        "width": self.rect[2], "height": self.rect[3]} if self.rect else None,
+                "rect": {
+                    "x": self.rect[0],
+                    "y": self.rect[1],
+                    "width": self.rect[2],
+                    "height": self.rect[3],
+                }
+                if self.rect
+                else None,
                 "content": self.content,
                 "content_type": self.content_type,
-                "font": self.font
+                "font": self.font,
             }
         return {
             "id": self.id,
             "type": "arrow",
-            "start_pos": {"x": self.start_pos[0], "y": self.start_pos[1]} if self.start_pos else None,
-            "end_pos": {"x": self.end_pos[0], "y": self.end_pos[1]} if self.end_pos else None,
-            "color": self.color
+            "start_pos": {"x": self.start_pos[0], "y": self.start_pos[1]}
+            if self.start_pos
+            else None,
+            "end_pos": {"x": self.end_pos[0], "y": self.end_pos[1]}
+            if self.end_pos
+            else None,
+            "color": self.color,
         }
 
 
@@ -181,30 +205,31 @@ class WebAnnotation:
 # Orange3 Registry Adapter (uses Orange3's widget_discovery)
 # =============================================================================
 
+
 class OrangeRegistryAdapter:
     """
     Adapter that uses Orange3's widget discovery.
     """
-    
+
     def __init__(self):
         self._registry = WidgetRegistry() if ORANGE3_AVAILABLE else None
         self._categories: List[Dict] = []
         self._widgets: Dict[str, Dict] = {}
         self._loaded = False
-    
+
     @property
-    def registry(self) -> Optional['WidgetRegistry']:
+    def registry(self) -> Optional["WidgetRegistry"]:
         return self._registry
-    
-    def discover_widgets(self):
+
+    def discover_widgets(self) -> None:
         """Discover widgets using Orange3's widget_discovery."""
         if self._loaded:
             return
-        
+
         try:
             if ORANGE3_AVAILABLE:
-                print("Using Orange3 widget discovery...")
-                
+                logger.info("Using Orange3 widget discovery...")
+
                 try:
                     # Try using WidgetDiscovery with widget_discovery function
                     discovery = WidgetDiscovery(self._registry)
@@ -212,218 +237,260 @@ class OrangeRegistryAdapter:
                     self._process_registry()
                 except AttributeError as ae:
                     # Fallback: WidgetDiscovery API changed in newer Orange3 versions
-                    print(f"WidgetDiscovery API changed, using alternative method: {ae}")
+                    logger.warning(
+                        f"WidgetDiscovery API changed, using alternative method: {ae}"
+                    )
                     self._alternative_discovery()
             else:
-                print("Orange3 not available, using fallback...")
+                logger.info("Orange3 not available, using fallback...")
                 self._manual_discovery()
-            
+
             self._loaded = True
-            print(f"Discovered {len(self._widgets)} widgets in {len(self._categories)} categories")
-            
+            logger.info(
+                f"Discovered {len(self._widgets)} widgets in {len(self._categories)} categories"
+            )
+
         except Exception as e:
-            print(f"Error discovering widgets: {e}")
+            logger.error(f"Error discovering widgets: {e}")
             import traceback
+
             traceback.print_exc()
             # Use manual discovery as last resort
-            print("Using manual discovery as fallback...")
+            logger.info("Using manual discovery as fallback...")
             self._manual_discovery()
             self._loaded = True
-    
+
     def _process_registry(self):
         """Process the registry after discovery."""
         if not self._registry:
             return
-        
+
         # Extract categories
         for cat in self._registry.categories():
-            self._categories.append({
-                "name": cat.name,
-                "description": cat.description or "",
-                "background": cat.background or "#808080",
-                "priority": cat.priority or 0,
-                "icon": cat.icon or ""
-            })
-        
+            self._categories.append(
+                {
+                    "name": cat.name,
+                    "description": cat.description or "",
+                    "background": cat.background or "#808080",
+                    "priority": cat.priority or 0,
+                    "icon": cat.icon or "",
+                }
+            )
+
         # Extract widgets
         for widget in self._registry.widgets():
             widget_dict = self._widget_to_dict(widget)
             self._widgets[widget.qualified_name] = widget_dict
-    
+
     def _alternative_discovery(self):
         """Alternative widget discovery using dynamic entry_points."""
         try:
             import pkgutil
             import importlib
-            
+
             # Core Orange3 widget packages
             core_packages = [
-                ('Orange.widgets.data', 'Data'),
-                ('Orange.widgets.visualize', 'Visualize'),
-                ('Orange.widgets.model', 'Model'),
-                ('Orange.widgets.evaluate', 'Evaluate'),
-                ('Orange.widgets.unsupervised', 'Unsupervised'),
+                ("Orange.widgets.data", "Data"),
+                ("Orange.widgets.visualize", "Visualize"),
+                ("Orange.widgets.model", "Model"),
+                ("Orange.widgets.evaluate", "Evaluate"),
+                ("Orange.widgets.unsupervised", "Unsupervised"),
             ]
-            
+
             # Dynamically discover add-ons via entry_points
             addon_packages = []
             for addon in _discover_addon_entry_points():
                 # Convert path to module name
                 module_name = None
-                if 'orangecontrib' in addon['path']:
+                if "orangecontrib" in addon["path"]:
                     # Extract module path from filesystem path
-                    parts = addon['path'].split('orangecontrib')
+                    parts = addon["path"].split("orangecontrib")
                     if len(parts) > 1:
-                        subpath = parts[1].strip(os.sep).replace(os.sep, '.')
+                        subpath = parts[1].strip(os.sep).replace(os.sep, ".")
                         module_name = f"orangecontrib.{subpath}"
-                
+
                 if module_name:
-                    addon_packages.append((module_name, addon['name'], addon.get('background'), addon.get('priority', 1000)))
-            
+                    addon_packages.append(
+                        (
+                            module_name,
+                            addon["name"],
+                            addon.get("background"),
+                            addon.get("priority", 1000),
+                        )
+                    )
+
             discovered_categories = set()
             widget_count = 0
-            
+
             # Process core packages
             for pkg_name, category_name in core_packages:
                 try:
                     pkg = importlib.import_module(pkg_name)
-                    pkg_path = getattr(pkg, '__path__', None)
+                    pkg_path = getattr(pkg, "__path__", None)
                     if not pkg_path:
                         continue
-                    
-                    cat_info = {"background": CATEGORY_COLORS.get(category_name, "#808080"), "priority": CATEGORY_PRIORITIES.get(category_name, 99)}
-                    
+
+                    cat_info = {
+                        "background": CATEGORY_COLORS.get(category_name, "#808080"),
+                        "priority": CATEGORY_PRIORITIES.get(category_name, 99),
+                    }
+
                     if category_name not in discovered_categories:
-                        self._categories.append({
-                            "name": category_name,
-                            "description": f"{category_name} widgets",
-                            "background": cat_info["background"],
-                            "priority": cat_info["priority"],
-                            "icon": ""
-                        })
+                        self._categories.append(
+                            {
+                                "name": category_name,
+                                "description": f"{category_name} widgets",
+                                "background": cat_info["background"],
+                                "priority": cat_info["priority"],
+                                "icon": "",
+                            }
+                        )
                         discovered_categories.add(category_name)
-                    
-                    widget_count += self._scan_package_for_widgets(pkg_name, pkg_path[0], category_name)
+
+                    widget_count += self._scan_package_for_widgets(
+                        pkg_name, pkg_path[0], category_name
+                    )
                 except ImportError:
                     continue
-            
+
             # Process dynamically discovered add-ons
             for addon_info in addon_packages:
                 pkg_name, category_name = addon_info[0], addon_info[1]
                 background = addon_info[2] if len(addon_info) > 2 else None
                 priority = addon_info[3] if len(addon_info) > 3 else 1000
-                
+
                 try:
                     pkg = importlib.import_module(pkg_name)
-                    pkg_path = getattr(pkg, '__path__', None)
+                    pkg_path = getattr(pkg, "__path__", None)
                     if not pkg_path:
                         continue
-                    
+
                     if category_name not in discovered_categories:
-                        self._categories.append({
-                            "name": category_name,
-                            "description": f"{category_name} widgets",
-                            "background": _normalize_color(background),
-                            "priority": priority,
-                            "icon": ""
-                        })
+                        self._categories.append(
+                            {
+                                "name": category_name,
+                                "description": f"{category_name} widgets",
+                                "background": _normalize_color(background),
+                                "priority": priority,
+                                "icon": "",
+                            }
+                        )
                         discovered_categories.add(category_name)
-                    
-                    widget_count += self._scan_package_for_widgets(pkg_name, pkg_path[0], category_name)
+
+                    widget_count += self._scan_package_for_widgets(
+                        pkg_name, pkg_path[0], category_name
+                    )
                 except ImportError:
                     continue
-            
-            print(f"Alternative discovery found {widget_count} widgets in {len(discovered_categories)} categories")
-            
+
+            logger.info(
+                f"Alternative discovery found {widget_count} widgets in {len(discovered_categories)} categories"
+            )
+
         except Exception as e:
-            print(f"Alternative discovery failed: {e}")
+            logger.error(f"Alternative discovery failed: {e}")
             import traceback
+
             traceback.print_exc()
             # Fall back to manual discovery
             self._manual_discovery()
-    
-    def _scan_package_for_widgets(self, pkg_name: str, pkg_path: str, category_name: str) -> int:
+
+    def _scan_package_for_widgets(
+        self, pkg_name: str, pkg_path: str, category_name: str
+    ) -> int:
         """Scan a package for widgets and return count."""
         import pkgutil
         import importlib
-        
+
         widget_count = 0
         for importer, modname, ispkg in pkgutil.iter_modules([pkg_path]):
-            if modname.startswith('ow') or modname.startswith('OW'):
+            if modname.startswith("ow") or modname.startswith("OW"):
                 try:
                     module = importlib.import_module(f"{pkg_name}.{modname}")
                     # Find OWWidget subclasses
                     for name, obj in vars(module).items():
-                        if (isinstance(obj, type) and 
-                            name.startswith('OW') and 
-                            hasattr(obj, 'name') and
-                            hasattr(obj, 'inputs') and
-                            hasattr(obj, 'outputs')):
-                            
-                            widget_dict = self._class_to_widget_dict(obj, category_name, pkg_name, modname, pkg_path)
+                        if (
+                            isinstance(obj, type)
+                            and name.startswith("OW")
+                            and hasattr(obj, "name")
+                            and hasattr(obj, "inputs")
+                            and hasattr(obj, "outputs")
+                        ):
+                            widget_dict = self._class_to_widget_dict(
+                                obj, category_name, pkg_name, modname, pkg_path
+                            )
                             if widget_dict:
-                                self._widgets[widget_dict['qualified_name']] = widget_dict
+                                self._widgets[widget_dict["qualified_name"]] = (
+                                    widget_dict
+                                )
                                 widget_count += 1
                 except Exception:
                     pass  # Skip problematic modules
         return widget_count
-    
-    def _class_to_widget_dict(self, widget_class, category_name: str, pkg_name: str, modname: str, pkg_path: str = None) -> Optional[Dict]:
+
+    def _class_to_widget_dict(
+        self,
+        widget_class,
+        category_name: str,
+        pkg_name: str,
+        modname: str,
+        pkg_path: str = None,
+    ) -> Optional[Dict]:
         """Convert a widget class to widget dict with Base64 icon."""
         try:
-            name = getattr(widget_class, 'name', widget_class.__name__)
+            name = getattr(widget_class, "name", widget_class.__name__)
             qualified_name = f"{pkg_name}.{modname}.{widget_class.__name__}"
-            
+
             # Get inputs
             inputs = []
-            for inp in getattr(widget_class, 'inputs', []):
+            for inp in getattr(widget_class, "inputs", []):
                 inp_dict = {
-                    "id": getattr(inp, 'name', str(inp)),
-                    "name": getattr(inp, 'name', str(inp)),
+                    "id": getattr(inp, "name", str(inp)),
+                    "name": getattr(inp, "name", str(inp)),
                     "types": [],
                     "flags": 0,
-                    "multiple": False
+                    "multiple": False,
                 }
                 inputs.append(inp_dict)
-            
+
             # Get outputs
             outputs = []
-            for out in getattr(widget_class, 'outputs', []):
+            for out in getattr(widget_class, "outputs", []):
                 out_dict = {
-                    "id": getattr(out, 'name', str(out)),
-                    "name": getattr(out, 'name', str(out)),
+                    "id": getattr(out, "name", str(out)),
+                    "name": getattr(out, "name", str(out)),
                     "types": [],
-                    "flags": 0
+                    "flags": 0,
                 }
                 outputs.append(out_dict)
-            
+
             # Resolve icon path and encode as Base64
-            icon_relative = getattr(widget_class, 'icon', '')
+            icon_relative = getattr(widget_class, "icon", "")
             icon_base64 = _DEFAULT_ICON_BASE64
-            
+
             if icon_relative and pkg_path:
                 icon_full_path = os.path.join(pkg_path, icon_relative)
                 encoded = _read_icon_as_base64(icon_full_path)
                 if encoded:
                     icon_base64 = encoded
-            
+
             return {
                 "id": qualified_name,
                 "qualified_name": qualified_name,
                 "name": self.WIDGET_NAME_OVERRIDES.get(name, name),
-                "description": getattr(widget_class, 'description', '') or '',
+                "description": getattr(widget_class, "description", "") or "",
                 "category": category_name,
-                "background": getattr(widget_class, 'background', None),
+                "background": getattr(widget_class, "background", None),
                 "icon": icon_base64,  # Base64 data URL
-                "priority": getattr(widget_class, 'priority', 0),
+                "priority": getattr(widget_class, "priority", 0),
                 "inputs": inputs,
                 "outputs": outputs,
-                "keywords": list(getattr(widget_class, 'keywords', [])),
-                "replaces": list(getattr(widget_class, 'replaces', [])),
+                "keywords": list(getattr(widget_class, "keywords", [])),
+                "replaces": list(getattr(widget_class, "replaces", [])),
             }
         except Exception as e:
             return None
-    
+
     def _manual_discovery(self):
         """Manual widget discovery when Orange3 is not available."""
         # Define basic categories
@@ -434,37 +501,41 @@ class OrangeRegistryAdapter:
             {"name": "Evaluate", "background": "#93C47D", "priority": 4},
             {"name": "Unsupervised", "background": "#8E7CC3", "priority": 5},
         ]
-    
+
     # 위젯 이름 매핑 (Orange3 원래 이름 -> 표시 이름)
     WIDGET_NAME_OVERRIDES = {
         "Column Statistics": "Feature Statistics",
     }
-    
-    def _widget_to_dict(self, widget: 'WidgetDescription') -> Dict:
+
+    def _widget_to_dict(self, widget: "WidgetDescription") -> Dict:
         """Convert WidgetDescription to dict."""
         inputs = []
-        for inp in (widget.inputs or []):
-            inputs.append({
-                "id": inp.name,
-                "name": inp.name,
-                "types": list(inp.types) if inp.types else [],
-                "flags": inp.flags if hasattr(inp, 'flags') else 0,
-                "multiple": getattr(inp, 'single', 1) == 0
-            })
-        
+        for inp in widget.inputs or []:
+            inputs.append(
+                {
+                    "id": inp.name,
+                    "name": inp.name,
+                    "types": list(inp.types) if inp.types else [],
+                    "flags": inp.flags if hasattr(inp, "flags") else 0,
+                    "multiple": getattr(inp, "single", 1) == 0,
+                }
+            )
+
         outputs = []
-        for out in (widget.outputs or []):
-            outputs.append({
-                "id": out.name,
-                "name": out.name,
-                "types": list(out.types) if out.types else [],
-                "flags": out.flags if hasattr(out, 'flags') else 0,
-                "dynamic": getattr(out, 'dynamic', False)
-            })
-        
+        for out in widget.outputs or []:
+            outputs.append(
+                {
+                    "id": out.name,
+                    "name": out.name,
+                    "types": list(out.types) if out.types else [],
+                    "flags": out.flags if hasattr(out, "flags") else 0,
+                    "dynamic": getattr(out, "dynamic", False),
+                }
+            )
+
         # 위젯 이름 오버라이드 적용
         display_name = self.WIDGET_NAME_OVERRIDES.get(widget.name, widget.name)
-        
+
         return {
             "id": widget.qualified_name,
             "name": display_name,
@@ -474,68 +545,63 @@ class OrangeRegistryAdapter:
             "keywords": list(widget.keywords) if widget.keywords else [],
             "inputs": inputs,
             "outputs": outputs,
-            "background": widget.background or ""
+            "background": widget.background or "",
         }
-    
+
     def list_categories(self) -> List[Dict]:
         """List all categories."""
         return self._categories
-    
+
     def list_widgets(self, category: str = None) -> List[Dict]:
         """List all widgets, optionally filtered by category."""
         widgets = list(self._widgets.values())
         if category:
             widgets = [w for w in widgets if w.get("category") == category]
         return widgets
-    
+
     def get_widget(self, widget_id: str) -> Optional[Dict]:
         """Get a specific widget."""
         return self._widgets.get(widget_id)
-    
+
     def check_channel_compatibility(
-        self, 
-        source_types: List[str], 
-        sink_types: List[str]
+        self, source_types: List[str], sink_types: List[str]
     ) -> Dict:
         """Check if channels are compatible using existing function."""
         if not ORANGE3_AVAILABLE:
             return {"compatible": True, "strict": True, "dynamic": False}
-        
+
         source = OutputSignal(name="source", types=tuple(source_types))
         sink = InputSignal(name="sink", types=tuple(sink_types))
-        
+
         compatible = compatible_channels(source, sink)
-        
-        return {
-            "compatible": compatible,
-            "strict": compatible,
-            "dynamic": False
-        }
+
+        return {"compatible": compatible, "strict": compatible, "dynamic": False}
 
 
 # =============================================================================
 # Orange3 Scheme Adapter (workflow management)
 # =============================================================================
 
+
 class OrangeSchemeAdapter:
     """
     Adapter that wraps the existing Scheme class for web API usage.
     """
-    
-    def __init__(self, registry: 'WidgetRegistry' = None):
+
+    def __init__(self, registry: "WidgetRegistry" = None):
         if not ORANGE3_AVAILABLE:
             raise ImportError("Orange3 is required")
-        
-        self._scheme: 'Scheme' = Scheme()
+
+        self._scheme: "Scheme" = Scheme()
         self._registry = registry
-        self._node_map: Dict[str, 'SchemeNode'] = {}
-        self._link_map: Dict[str, 'SchemeLink'] = {}
-        self._annotation_map: Dict[str, 'BaseSchemeAnnotation'] = {}
-    
+        self._node_map: Dict[str, "SchemeNode"] = {}
+        self._link_map: Dict[str, "SchemeLink"] = {}
+        self._annotation_map: Dict[str, "BaseSchemeAnnotation"] = {}
+
     @property
-    def scheme(self) -> 'Scheme':
+    def scheme(self) -> "Scheme":
         return self._scheme
-    
+
     def get_workflow_dict(self) -> Dict:
         """Convert scheme to web-friendly dictionary."""
         node_id_map = {}
@@ -545,58 +611,58 @@ class OrangeSchemeAdapter:
             node_id_map[id(node)] = web_id
             self._node_map[web_id] = node
             nodes.append(WebSchemeNode.from_scheme_node(node).to_dict())
-        
+
         links = []
         for link in self._scheme.links:
             web_id = str(id(link))
             self._link_map[web_id] = link
             links.append(WebSchemeLink.from_scheme_link(link, node_id_map).to_dict())
-        
+
         annotations = []
         for annotation in self._scheme.annotations:
             web_id = str(id(annotation))
             self._annotation_map[web_id] = annotation
-            annotations.append(WebAnnotation.from_scheme_annotation(annotation).to_dict())
-        
+            annotations.append(
+                WebAnnotation.from_scheme_annotation(annotation).to_dict()
+            )
+
         return {
             "title": self._scheme.title,
             "description": self._scheme.description,
             "nodes": nodes,
             "links": links,
-            "annotations": annotations
+            "annotations": annotations,
         }
-    
-    def add_node(self, widget_id: str, title: str, position: Tuple[float, float]) -> Dict:
+
+    def add_node(
+        self, widget_id: str, title: str, position: Tuple[float, float]
+    ) -> Dict:
         """Add a node using existing SchemeNode class."""
         if not self._registry:
             raise ValueError("Widget registry not set")
-        
+
         widget_desc = self._registry.widget(widget_id)
         if not widget_desc:
             raise ValueError(f"Widget not found: {widget_id}")
-        
-        node = SchemeNode(
-            description=widget_desc,
-            title=title,
-            position=position
-        )
-        
+
+        node = SchemeNode(description=widget_desc, title=title, position=position)
+
         self._scheme.add_node(node)
-        
+
         web_id = str(id(node))
         self._node_map[web_id] = node
         return WebSchemeNode.from_scheme_node(node).to_dict()
-    
+
     def remove_node(self, node_id: str) -> bool:
         """Remove a node using existing Scheme method."""
         node = self._node_map.get(node_id)
         if not node:
             return False
-        
+
         self._scheme.remove_node(node)
         del self._node_map[node_id]
         return True
-    
+
     def update_node_position(self, node_id: str, position: Tuple[float, float]) -> bool:
         """Update node position."""
         node = self._node_map.get(node_id)
@@ -604,128 +670,132 @@ class OrangeSchemeAdapter:
             return False
         node.position = position
         return True
-    
+
     def add_link(
-        self, 
-        source_node_id: str, 
+        self,
+        source_node_id: str,
         source_channel: str,
-        sink_node_id: str, 
-        sink_channel: str
+        sink_node_id: str,
+        sink_channel: str,
     ) -> Optional[Dict]:
         """Add a link using existing SchemeLink class."""
         source_node = self._node_map.get(source_node_id)
         sink_node = self._node_map.get(sink_node_id)
-        
+
         if not source_node or not sink_node:
             return None
-        
+
         source_ch = None
         sink_ch = None
-        
+
         if source_node.description:
             for out in source_node.description.outputs:
                 if out.name == source_channel:
                     source_ch = out
                     break
-        
+
         if sink_node.description:
             for inp in sink_node.description.inputs:
                 if inp.name == sink_channel:
                     sink_ch = inp
                     break
-        
+
         if not source_ch or not sink_ch:
             return None
-        
+
         if not compatible_channels(source_ch, sink_ch):
             return None
-        
+
         link = SchemeLink(
             source_node=source_node,
             source_channel=source_ch,
             sink_node=sink_node,
-            sink_channel=sink_ch
+            sink_channel=sink_ch,
         )
-        
+
         try:
             self._scheme.add_link(link)
         except Exception as e:
-            print(f"Error adding link: {e}")
+            logger.error(f"Error adding link: {e}")
             return None
-        
+
         web_id = str(id(link))
         self._link_map[web_id] = link
-        
+
         node_id_map = {id(n): str(id(n)) for n in self._scheme.nodes}
         return WebSchemeLink.from_scheme_link(link, node_id_map).to_dict()
-    
+
     def remove_link(self, link_id: str) -> bool:
         """Remove a link."""
         link = self._link_map.get(link_id)
         if not link:
             return False
-        
+
         self._scheme.remove_link(link)
         del self._link_map[link_id]
         return True
-    
+
     def add_text_annotation(
-        self, 
-        rect: Tuple[float, float, float, float], 
+        self,
+        rect: Tuple[float, float, float, float],
         content: str,
-        content_type: str = "text/plain"
+        content_type: str = "text/plain",
     ) -> Dict:
         """Add text annotation."""
         annotation = SchemeTextAnnotation(rect=rect, text=content)
         self._scheme.add_annotation(annotation)
-        
+
         web_id = str(id(annotation))
         self._annotation_map[web_id] = annotation
         return WebAnnotation.from_scheme_annotation(annotation).to_dict()
-    
+
     def add_arrow_annotation(
         self,
         start_pos: Tuple[float, float],
         end_pos: Tuple[float, float],
-        color: str = "#808080"
+        color: str = "#808080",
     ) -> Dict:
         """Add arrow annotation."""
-        annotation = SchemeArrowAnnotation(start_pos=start_pos, end_pos=end_pos, color=color)
+        annotation = SchemeArrowAnnotation(
+            start_pos=start_pos, end_pos=end_pos, color=color
+        )
         self._scheme.add_annotation(annotation)
-        
+
         web_id = str(id(annotation))
         self._annotation_map[web_id] = annotation
         return WebAnnotation.from_scheme_annotation(annotation).to_dict()
-    
+
     def remove_annotation(self, annotation_id: str) -> bool:
         """Remove annotation."""
         annotation = self._annotation_map.get(annotation_id)
         if not annotation:
             return False
-        
+
         self._scheme.remove_annotation(annotation)
         del self._annotation_map[annotation_id]
         return True
-    
+
     def export_to_ows(self) -> str:
         """Export scheme to OWS format."""
         import io
+
         stream = io.BytesIO()
         scheme_to_ows_stream(self._scheme, stream)
-        return stream.getvalue().decode('utf-8')
-    
+        return stream.getvalue().decode("utf-8")
+
     def import_from_ows(self, ows_content: str) -> bool:
         """Import scheme from OWS format."""
         import io
+
         try:
-            stream = io.BytesIO(ows_content.encode('utf-8'))
+            stream = io.BytesIO(ows_content.encode("utf-8"))
             self._scheme = scheme_load(stream, registry=self._registry)
             self._node_map = {str(id(n)): n for n in self._scheme.nodes}
             self._link_map = {str(id(l)): l for l in self._scheme.links}
             self._annotation_map = {str(id(a)): a for a in self._scheme.annotations}
             return True
         except Exception as e:
-            print(f"Error importing OWS: {e}")
+            logger.error(f"Error importing OWS: {e}")
             return False
 
 
@@ -733,11 +803,10 @@ class OrangeSchemeAdapter:
 # Availability check
 # =============================================================================
 
+
 def get_availability() -> Dict[str, bool]:
     """Check if Orange3 is available."""
-    return {
-        "orange3": ORANGE3_AVAILABLE
-    }
+    return {"orange3": ORANGE3_AVAILABLE}
 
 
 # =============================================================================
@@ -754,15 +823,14 @@ import site
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 
 def _get_orange3_path_from_import() -> Optional[str]:
     """Try to get Orange3 widgets path by importing Orange module."""
     try:
         import Orange
+
         orange_dir = os.path.dirname(Orange.__file__)
-        widgets_path = os.path.join(orange_dir, 'widgets')
+        widgets_path = os.path.join(orange_dir, "widgets")
         if os.path.exists(widgets_path):
             return widgets_path
     except ImportError:
@@ -774,24 +842,24 @@ def _get_site_packages_paths() -> List[str]:
     """Get all possible site-packages paths dynamically."""
     paths = []
     py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-    
+
     for p in sys.path:
-        if 'site-packages' in p and os.path.isdir(p):
+        if "site-packages" in p and os.path.isdir(p):
             paths.append(p)
-    
+
     try:
         for sp in site.getsitepackages():
             if sp and os.path.isdir(sp):
                 paths.append(sp)
     except Exception:
         pass
-    
-    venv_path = os.environ.get('VIRTUAL_ENV')
+
+    venv_path = os.environ.get("VIRTUAL_ENV")
     if venv_path:
-        linux_path = os.path.join(venv_path, 'lib', py_version, 'site-packages')
+        linux_path = os.path.join(venv_path, "lib", py_version, "site-packages")
         if os.path.isdir(linux_path):
             paths.append(linux_path)
-    
+
     return list(dict.fromkeys(paths))
 
 
@@ -799,23 +867,24 @@ def _get_site_packages_paths() -> List[str]:
 # Dynamic Add-on Discovery and Icon Utilities
 # =============================================================================
 
+
 def _read_icon_as_base64(icon_path: str) -> Optional[str]:
     """Read SVG/PNG icon and return as Base64 data URL."""
     if not icon_path or not os.path.exists(icon_path):
         return None
     try:
-        with open(icon_path, 'rb') as f:
+        with open(icon_path, "rb") as f:
             content = f.read()
-        b64 = base64.b64encode(content).decode('utf-8')
-        
+        b64 = base64.b64encode(content).decode("utf-8")
+
         # Determine MIME type
-        if icon_path.lower().endswith('.svg'):
-            mime_type = 'image/svg+xml'
-        elif icon_path.lower().endswith('.png'):
-            mime_type = 'image/png'
+        if icon_path.lower().endswith(".svg"):
+            mime_type = "image/svg+xml"
+        elif icon_path.lower().endswith(".png"):
+            mime_type = "image/png"
         else:
-            mime_type = 'image/svg+xml'  # Default to SVG
-        
+            mime_type = "image/svg+xml"  # Default to SVG
+
         return f"data:{mime_type};base64,{b64}"
     except Exception:
         return None
@@ -825,25 +894,25 @@ def _normalize_color(color: Optional[str]) -> str:
     """Normalize color value to hex format."""
     if not color:
         return "#999999"
-    
+
     # Handle named colors
     color_map = {
-        'light-blue': '#B8E0D2',
-        'lightblue': '#B8E0D2',
-        'light-green': '#93C47D',
-        'lightgreen': '#93C47D',
-        'light-yellow': '#F7F5A8',
-        'lightyellow': '#F7F5A8',
+        "light-blue": "#B8E0D2",
+        "lightblue": "#B8E0D2",
+        "light-green": "#93C47D",
+        "lightgreen": "#93C47D",
+        "light-yellow": "#F7F5A8",
+        "lightyellow": "#F7F5A8",
     }
-    
+
     color_lower = color.lower().strip()
     if color_lower in color_map:
         return color_map[color_lower]
-    
+
     # Already a hex color
-    if color.startswith('#'):
+    if color.startswith("#"):
         return color
-    
+
     return "#999999"
 
 
@@ -851,33 +920,41 @@ def _discover_addon_entry_points() -> List[Dict]:
     """Dynamically discover all Orange3 add-ons via entry_points."""
     addons = []
     try:
-        eps = importlib.metadata.entry_points(group='orange.widgets')
+        eps = importlib.metadata.entry_points(group="orange.widgets")
         for ep in eps:
             # Skip core Orange3 widgets (handled separately)
-            if ep.name == 'Orange Widgets':
+            if ep.name == "Orange Widgets":
                 continue
             try:
                 module = importlib.import_module(ep.value)
-                module_path = os.path.dirname(module.__file__) if hasattr(module, '__file__') else None
-                
+                module_path = (
+                    os.path.dirname(module.__file__)
+                    if hasattr(module, "__file__")
+                    else None
+                )
+
                 if module_path:
                     # Extract source name from module path (e.g., 'text' from 'orangecontrib.text.widgets')
-                    parts = ep.value.split('.')
-                    source = parts[1] if len(parts) > 1 else ep.name.lower().replace(' ', '')
-                    
-                    addons.append({
-                        'name': getattr(module, 'NAME', ep.name),
-                        'path': module_path,
-                        'background': getattr(module, 'BACKGROUND', None),
-                        'priority': getattr(module, 'PRIORITY', 1000),
-                        'source': source,
-                        'entry_point_name': ep.name,
-                    })
+                    parts = ep.value.split(".")
+                    source = (
+                        parts[1] if len(parts) > 1 else ep.name.lower().replace(" ", "")
+                    )
+
+                    addons.append(
+                        {
+                            "name": getattr(module, "NAME", ep.name),
+                            "path": module_path,
+                            "background": getattr(module, "BACKGROUND", None),
+                            "priority": getattr(module, "PRIORITY", 1000),
+                            "source": source,
+                            "entry_point_name": ep.name,
+                        }
+                    )
             except ImportError as e:
-                print(f"Warning: Could not import add-on {ep.name}: {e}")
+                logger.warning(f"Could not import add-on {ep.name}: {e}")
     except Exception as e:
-        print(f"Warning: Error discovering add-ons: {e}")
-    
+        logger.warning(f"Error discovering add-ons: {e}")
+
     return addons
 
 
@@ -912,73 +989,65 @@ PARENT_CLASS_PORTS = {
     "OWBaseLearner": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"},
         ],
         "outputs": [
             {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
+            {"id": "model", "name": "Model", "type": "Model"},
+        ],
     },
     "OWProvidesLearner": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"}
+            {"id": "preprocessor", "name": "Preprocessor", "type": "Preprocessor"},
         ],
         "outputs": [
             {"id": "learner", "name": "Learner", "type": "Learner"},
-            {"id": "model", "name": "Model", "type": "Model"}
-        ]
+            {"id": "model", "name": "Model", "type": "Model"},
+        ],
     },
     # Data projection widgets (Scatter Plot, t-SNE, MDS, etc.)
     "OWDataProjectionWidget": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"},
         ],
         "outputs": [
             {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
+        ],
     },
     "OWProjectionWidgetBase": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"},
         ],
         "outputs": [
             {"id": "selected_data", "name": "Selected Data", "type": "Data"},
-            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"}
-        ]
+            {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
+        ],
     },
     # Anchor projection widgets (Radviz, FreeViz, Linear Projection)
     "OWAnchorProjectionWidget": {
         "inputs": [
             {"id": "data", "name": "Data", "type": "Data"},
-            {"id": "data_subset", "name": "Data Subset", "type": "Data"}
+            {"id": "data_subset", "name": "Data Subset", "type": "Data"},
         ],
         "outputs": [
             {"id": "selected_data", "name": "Selected Data", "type": "Data"},
             {"id": "annotated_data", "name": "Annotated Data", "type": "Data"},
-            {"id": "components", "name": "Components", "type": "Data"}
-        ]
+            {"id": "components", "name": "Components", "type": "Data"},
+        ],
     },
     # Text corpus widgets
     "OWTextBaseWidget": {
-        "inputs": [
-            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
-        ],
-        "outputs": [
-            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
-        ]
+        "inputs": [{"id": "corpus", "name": "Corpus", "type": "Corpus"}],
+        "outputs": [{"id": "corpus", "name": "Corpus", "type": "Corpus"}],
     },
     # Text vectorizer widgets (Bag of Words, etc.)
     "OWBaseVectorizer": {
-        "inputs": [
-            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
-        ],
-        "outputs": [
-            {"id": "corpus", "name": "Corpus", "type": "Corpus"}
-        ]
+        "inputs": [{"id": "corpus", "name": "Corpus", "type": "Corpus"}],
+        "outputs": [{"id": "corpus", "name": "Corpus", "type": "Corpus"}],
     },
 }
 
@@ -995,19 +1064,19 @@ _DYNAMIC_INHERITANCE_CACHE: Dict[str, List[str]] = {}
 
 def _get_dynamic_inheritance(class_name: str) -> List[str]:
     """Get inheritance chain for a widget class by importing it at runtime.
-    
+
     Returns list of parent class names that exist in PARENT_CLASS_PORTS.
     """
     if class_name in _DYNAMIC_INHERITANCE_CACHE:
         return _DYNAMIC_INHERITANCE_CACHE[class_name]
-    
+
     result = []
-    
+
     # Try to import the widget class and inspect its MRO
     try:
         # Try Orange3 core widgets
         import importlib
-        
+
         # Common Orange3 widget module patterns
         module_patterns = [
             f"Orange.widgets.model.ow{class_name[2:].lower()}",
@@ -1016,7 +1085,7 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
             f"Orange.widgets.evaluate.ow{class_name[2:].lower()}",
             f"Orange.widgets.unsupervised.ow{class_name[2:].lower()}",
         ]
-        
+
         widget_class = None
         for pattern in module_patterns:
             try:
@@ -1026,7 +1095,7 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
                     break
             except (ImportError, ModuleNotFoundError):
                 continue
-        
+
         if widget_class:
             # Get MRO and find matching parent classes
             for parent in widget_class.__mro__:
@@ -1035,149 +1104,158 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
                     result.append(parent_name)
     except Exception:
         pass
-    
+
     _DYNAMIC_INHERITANCE_CACHE[class_name] = result
     return result
 
 
 class WidgetDiscovery:
     """Discovers Orange3 widgets from the filesystem using AST parsing.
-    
+
     Dynamically discovers all installed Orange3 add-ons via entry_points
     and includes widget icons as Base64 data URLs.
     """
-    
+
     WIDGET_NAME_OVERRIDES = {
         "Column Statistics": "Feature Statistics",
     }
-    
+
     def __init__(self, orange3_path: Optional[str] = None):
         self.orange3_path = orange3_path or self._find_orange3_path()
         # Dynamically discover all installed add-ons
         self.addon_paths = _discover_addon_entry_points()
         self.categories: Dict[str, Dict] = {}
         self.widgets: List[Dict] = []
-    
+
     def _find_orange3_path(self) -> Optional[str]:
         """Find Orange3 installation path."""
-        env_path = os.environ.get('ORANGE3_WIDGETS_PATH')
+        env_path = os.environ.get("ORANGE3_WIDGETS_PATH")
         if env_path and os.path.isdir(env_path):
             return env_path
-        
+
         import_path = _get_orange3_path_from_import()
         if import_path:
             return import_path
-        
+
         for sp in _get_site_packages_paths():
             path = os.path.join(sp, "Orange", "widgets")
             if os.path.isdir(path) and os.path.isdir(os.path.join(path, "data")):
                 return path
-        
+
         return None
-    
+
     def discover(self) -> Dict[str, Any]:
         """Discover all widgets and categories."""
         self.categories = {}
         self.widgets = []
-        
+
         # Discover core Orange3 widgets
         if self.orange3_path and os.path.exists(self.orange3_path):
             self._discover_orange3_widgets()
-        
+
         # Dynamically discover all installed add-ons
         for addon in self.addon_paths:
-            if os.path.exists(addon['path']):
+            if os.path.exists(addon["path"]):
                 self._discover_addon_widgets(addon)
-        
+
         if not self.widgets:
             return {"categories": [], "widgets": [], "total": 0}
-        
+
         return self._format_result()
-    
+
     def _discover_orange3_widgets(self):
         """Discover Orange3 core widgets."""
-        widget_dirs = ['data', 'visualize', 'model', 'evaluate', 'unsupervised']
-        
+        widget_dirs = ["data", "visualize", "model", "evaluate", "unsupervised"]
+
         for subdir in widget_dirs:
             dir_path = os.path.join(self.orange3_path, subdir)
             if not os.path.exists(dir_path):
                 continue
-            
+
             cat_info = self._read_category_info(dir_path, subdir)
-            self._scan_widget_directory(dir_path, cat_info, source='orange3')
-    
+            self._scan_widget_directory(dir_path, cat_info, source="orange3")
+
     def _discover_addon_widgets(self, addon: Dict):
         """Discover widgets from a dynamically discovered add-on."""
         cat_info = {
-            'name': addon['name'],
-            'background': _normalize_color(addon.get('background')) or CATEGORY_COLORS.get(addon['name'], '#999999'),
-            'priority': addon.get('priority', 1000)
+            "name": addon["name"],
+            "background": _normalize_color(addon.get("background"))
+            or CATEGORY_COLORS.get(addon["name"], "#999999"),
+            "priority": addon.get("priority", 1000),
         }
-        self._scan_widget_directory(addon['path'], cat_info, source=addon['source'])
-    
-    def _scan_widget_directory(self, dir_path: str, cat_info: Dict, source: str = 'orange3'):
+        self._scan_widget_directory(addon["path"], cat_info, source=addon["source"])
+
+    def _scan_widget_directory(
+        self, dir_path: str, cat_info: Dict, source: str = "orange3"
+    ):
         """Scan a widget directory and extract widgets with Base64 icons."""
         for filename in sorted(os.listdir(dir_path)):
-            if filename.startswith('ow') and filename.endswith('.py'):
+            if filename.startswith("ow") and filename.endswith(".py"):
                 filepath = os.path.join(dir_path, filename)
                 widget_info = self._extract_widget_info(filepath)
-                
-                if widget_info and widget_info.get('name'):
-                    widget_category = widget_info.get('category') or cat_info['name']
-                    
+
+                if widget_info and widget_info.get("name"):
+                    widget_category = widget_info.get("category") or cat_info["name"]
+
                     if widget_category not in self.categories:
                         self.categories[widget_category] = {
-                            'name': widget_category,
-                            'background': CATEGORY_COLORS.get(widget_category, cat_info['background']),
-                            'priority': CATEGORY_PRIORITIES.get(widget_category, cat_info.get('priority', 10)),
-                            'widgets': []
+                            "name": widget_category,
+                            "background": CATEGORY_COLORS.get(
+                                widget_category, cat_info["background"]
+                            ),
+                            "priority": CATEGORY_PRIORITIES.get(
+                                widget_category, cat_info.get("priority", 10)
+                            ),
+                            "widgets": [],
                         }
-                    
+
                     # Resolve icon path and encode as Base64
-                    icon_relative = widget_info.get('icon', 'icons/Unknown.svg')
+                    icon_relative = widget_info.get("icon", "icons/Unknown.svg")
                     icon_full_path = os.path.join(dir_path, icon_relative)
                     icon_base64 = _read_icon_as_base64(icon_full_path)
-                    
+
                     # Use default icon if not found
                     if not icon_base64:
                         icon_base64 = _DEFAULT_ICON_BASE64
-                    
-                    display_name = self.WIDGET_NAME_OVERRIDES.get(widget_info['name'], widget_info['name'])
-                    widget_id = self._generate_widget_id(widget_info['name'])
-                    
+
+                    display_name = self.WIDGET_NAME_OVERRIDES.get(
+                        widget_info["name"], widget_info["name"]
+                    )
+                    widget_id = self._generate_widget_id(widget_info["name"])
+
                     # Ports are already merged with inherited ports in _extract_widget_info
                     widget_data = {
-                        'id': widget_id,
-                        'name': display_name,
-                        'description': widget_info.get('description', ''),
-                        'icon': icon_base64,  # Base64 data URL
-                        'category': widget_category,
-                        'priority': widget_info.get('priority', 9999),
-                        'inputs': widget_info.get('inputs', []),
-                        'outputs': widget_info.get('outputs', []),
-                        'keywords': widget_info.get('keywords', []),
-                        'source': source,
+                        "id": widget_id,
+                        "name": display_name,
+                        "description": widget_info.get("description", ""),
+                        "icon": icon_base64,  # Base64 data URL
+                        "category": widget_category,
+                        "priority": widget_info.get("priority", 9999),
+                        "inputs": widget_info.get("inputs", []),
+                        "outputs": widget_info.get("outputs", []),
+                        "keywords": widget_info.get("keywords", []),
+                        "source": source,
                     }
-                    
-                    self.categories[widget_category]['widgets'].append(widget_data)
+
+                    self.categories[widget_category]["widgets"].append(widget_data)
                     self.widgets.append(widget_data)
-    
+
     def _read_category_info(self, dir_path: str, default_name: str) -> Dict:
         """Read category info from __init__.py."""
         cat_name = default_name.capitalize()
-        cat_bg = CATEGORY_COLORS.get(cat_name, '#999999')
+        cat_bg = CATEGORY_COLORS.get(cat_name, "#999999")
         cat_priority = CATEGORY_PRIORITIES.get(cat_name, 10)
-        
-        init_file = os.path.join(dir_path, '__init__.py')
+
+        init_file = os.path.join(dir_path, "__init__.py")
         if os.path.exists(init_file):
             try:
-                with open(init_file, 'r') as f:
+                with open(init_file, "r") as f:
                     content = f.read()
-                
+
                 name_match = re.search(r'NAME\s*=\s*["\']([^"\']+)["\']', content)
                 bg_match = re.search(r'BACKGROUND\s*=\s*["\']([^"\']+)["\']', content)
-                priority_match = re.search(r'PRIORITY\s*=\s*(\d+)', content)
-                
+                priority_match = re.search(r"PRIORITY\s*=\s*(\d+)", content)
+
                 if name_match:
                     cat_name = name_match.group(1)
                 if bg_match:
@@ -1186,53 +1264,53 @@ class WidgetDiscovery:
                     cat_priority = int(priority_match.group(1))
             except Exception:
                 pass
-        
-        return {'name': cat_name, 'background': cat_bg, 'priority': cat_priority}
-    
+
+        return {"name": cat_name, "background": cat_bg, "priority": cat_priority}
+
     def _extract_widget_info(self, filepath: str) -> Optional[Dict]:
         """Extract widget info from Python file using AST parsing."""
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             tree = ast.parse(content)
             info = {
-                'name': None,
-                'description': None,
-                'icon': None,
-                'category': None,
-                'priority': 9999,
-                'inputs': [],
-                'outputs': [],
-                'keywords': [],
-                'class_name': None,
-                'parent_classes': [],
+                "name": None,
+                "description": None,
+                "icon": None,
+                "category": None,
+                "priority": 9999,
+                "inputs": [],
+                "outputs": [],
+                "keywords": [],
+                "class_name": None,
+                "parent_classes": [],
             }
-            
+
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef) and self._is_widget_class(node):
                     # Extract class name and parent classes
-                    info['class_name'] = node.name
-                    info['parent_classes'] = self._extract_parent_classes(node)
-                    
+                    info["class_name"] = node.name
+                    info["parent_classes"] = self._extract_parent_classes(node)
+
                     for item in node.body:
                         if isinstance(item, ast.Assign):
                             self._extract_assign(item, info)
                         elif isinstance(item, ast.ClassDef):
-                            if item.name == 'Inputs':
-                                info['inputs'] = self._extract_io_class(item)
-                            elif item.name == 'Outputs':
-                                info['outputs'] = self._extract_io_class(item)
-                    
-                    if info['name']:
+                            if item.name == "Inputs":
+                                info["inputs"] = self._extract_io_class(item)
+                            elif item.name == "Outputs":
+                                info["outputs"] = self._extract_io_class(item)
+
+                    if info["name"]:
                         # Apply inherited ports from parent classes
                         self._apply_inherited_ports(info)
                         return info
-            
+
             return None
         except Exception:
             return None
-    
+
     def _extract_parent_classes(self, node: ast.ClassDef) -> List[str]:
         """Extract parent class names from a class definition."""
         parents = []
@@ -1242,78 +1320,84 @@ class WidgetDiscovery:
             elif isinstance(base, ast.Attribute):
                 parents.append(base.attr)
         return parents
-    
+
     def _apply_inherited_ports(self, info: Dict):
         """Apply inherited ports from parent classes.
-        
+
         Automatically resolves parent class ports by:
         1. Checking CLASS_INHERITANCE_MAP for explicit mappings
         2. Directly matching parent class names in PARENT_CLASS_PORTS
         3. Recursively checking parent class hierarchy
         """
-        class_name = info.get('class_name', '')
-        parent_classes = info.get('parent_classes', [])
-        
+        class_name = info.get("class_name", "")
+        parent_classes = info.get("parent_classes", [])
+
         # Find all matching parent port definitions
         resolved_parents = self._resolve_parent_ports(class_name, parent_classes)
-        
+
         if not resolved_parents:
             return
-        
+
         # Merge all inherited ports (earlier in list = higher priority)
         all_inherited_inputs = []
         all_inherited_outputs = []
         seen_input_ids = set()
         seen_output_ids = set()
-        
+
         for parent_name in resolved_parents:
             parent_ports = PARENT_CLASS_PORTS.get(parent_name, {})
-            for inp in parent_ports.get('inputs', []):
-                if inp['id'] not in seen_input_ids:
+            for inp in parent_ports.get("inputs", []):
+                if inp["id"] not in seen_input_ids:
                     all_inherited_inputs.append(inp.copy())
-                    seen_input_ids.add(inp['id'])
-            for out in parent_ports.get('outputs', []):
-                if out['id'] not in seen_output_ids:
+                    seen_input_ids.add(inp["id"])
+            for out in parent_ports.get("outputs", []):
+                if out["id"] not in seen_output_ids:
                     all_inherited_outputs.append(out.copy())
-                    seen_output_ids.add(out['id'])
-        
+                    seen_output_ids.add(out["id"])
+
         # Merge with widget's own ports (inherited first, then own)
-        existing_input_ids = {p['id'] for p in info['inputs']}
-        merged_inputs = [p for p in all_inherited_inputs if p['id'] not in existing_input_ids]
-        merged_inputs.extend(info['inputs'])
-        info['inputs'] = merged_inputs
-        
-        existing_output_ids = {p['id'] for p in info['outputs']}
-        merged_outputs = [p for p in all_inherited_outputs if p['id'] not in existing_output_ids]
-        merged_outputs.extend(info['outputs'])
-        info['outputs'] = merged_outputs
-    
-    def _resolve_parent_ports(self, class_name: str, parent_classes: List[str]) -> List[str]:
+        existing_input_ids = {p["id"] for p in info["inputs"]}
+        merged_inputs = [
+            p for p in all_inherited_inputs if p["id"] not in existing_input_ids
+        ]
+        merged_inputs.extend(info["inputs"])
+        info["inputs"] = merged_inputs
+
+        existing_output_ids = {p["id"] for p in info["outputs"]}
+        merged_outputs = [
+            p for p in all_inherited_outputs if p["id"] not in existing_output_ids
+        ]
+        merged_outputs.extend(info["outputs"])
+        info["outputs"] = merged_outputs
+
+    def _resolve_parent_ports(
+        self, class_name: str, parent_classes: List[str]
+    ) -> List[str]:
         """Resolve parent class names that have port definitions.
-        
+
         Uses multiple strategies:
         1. Dynamic class inspection (imports actual class and checks MRO)
         2. Explicit CLASS_INHERITANCE_MAP
         3. Direct parent class matching in PARENT_CLASS_PORTS
         4. Pattern matching on parent class names
-        
+
         Returns a list of parent class names that exist in PARENT_CLASS_PORTS,
         in order of inheritance priority.
         """
         resolved = []
         checked = set()
-        
+
         # Try dynamic inheritance first (most accurate)
         dynamic_parents = _get_dynamic_inheritance(class_name)
         if dynamic_parents:
             resolved.extend(dynamic_parents)
             return resolved
-        
+
         def check_class(name: str):
             if name in checked:
                 return
             checked.add(name)
-            
+
             # Check explicit mapping first
             if name in CLASS_INHERITANCE_MAP:
                 mapped = CLASS_INHERITANCE_MAP[name]
@@ -1321,63 +1405,63 @@ class WidgetDiscovery:
                     resolved.append(mapped)
                 check_class(mapped)
                 return
-            
+
             # Check if directly in PARENT_CLASS_PORTS
             if name in PARENT_CLASS_PORTS and name not in resolved:
                 resolved.append(name)
-        
+
         # Check the widget class itself
         check_class(class_name)
-        
+
         # Check all parent classes from AST
         for parent in parent_classes:
             check_class(parent)
-            
+
             # Pattern matching: find matching parent in PARENT_CLASS_PORTS
             for known_parent in PARENT_CLASS_PORTS.keys():
                 # Match patterns like "BaseLearner" in "OWBaseLearner"
-                base_name = known_parent.replace('OW', '')
+                base_name = known_parent.replace("OW", "")
                 if base_name in parent and known_parent not in resolved:
                     resolved.append(known_parent)
-        
+
         return resolved
-    
+
     def _is_widget_class(self, node: ast.ClassDef) -> bool:
         """Check if a class is a widget class."""
         for base in node.bases:
-            base_name = ''
+            base_name = ""
             if isinstance(base, ast.Name):
                 base_name = base.id
             elif isinstance(base, ast.Attribute):
                 base_name = base.attr
-            
-            if 'Widget' in base_name or base_name.startswith('OW'):
+
+            if "Widget" in base_name or base_name.startswith("OW"):
                 return True
         return False
-    
+
     def _extract_assign(self, item: ast.Assign, info: Dict):
         """Extract info from simple assignment."""
         for target in item.targets:
             if isinstance(target, ast.Name):
                 name = target.id
                 value = self._get_constant_value(item.value)
-                
-                if name == 'name' and value:
-                    info['name'] = value
-                elif name == 'description' and value:
-                    info['description'] = value
-                elif name == 'icon' and value:
-                    info['icon'] = value
-                elif name == 'category' and value:
-                    info['category'] = value
-                elif name == 'priority' and isinstance(item.value, ast.Constant):
+
+                if name == "name" and value:
+                    info["name"] = value
+                elif name == "description" and value:
+                    info["description"] = value
+                elif name == "icon" and value:
+                    info["icon"] = value
+                elif name == "category" and value:
+                    info["category"] = value
+                elif name == "priority" and isinstance(item.value, ast.Constant):
                     if isinstance(item.value.value, (int, float)):
-                        info['priority'] = int(item.value.value)
-    
+                        info["priority"] = int(item.value.value)
+
     def _extract_io_class(self, class_node: ast.ClassDef) -> List[Dict]:
         """Extract inputs or outputs from nested class."""
         ports = []
-        
+
         for item in class_node.body:
             if isinstance(item, ast.Assign):
                 for target in item.targets:
@@ -1386,64 +1470,64 @@ class WidgetDiscovery:
                         port_info = self._parse_io_call(item.value, port_id)
                         if port_info:
                             ports.append(port_info)
-        
+
         return ports
-    
+
     def _parse_io_call(self, node, port_id: str) -> Optional[Dict]:
         """Parse Input(...), Output(...), or MultiInput(...) call."""
         if not isinstance(node, ast.Call):
             return None
-        
-        func_name = ''
+
+        func_name = ""
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
-        
-        if func_name not in ('Input', 'Output', 'MultiInput'):
+
+        if func_name not in ("Input", "Output", "MultiInput"):
             return None
-        
+
         port_name = port_id
         if node.args and len(node.args) >= 1:
             name_val = self._get_constant_value(node.args[0])
             if name_val:
                 port_name = name_val
-        
-        port_type = 'Data'
+
+        port_type = "Data"
         if node.args and len(node.args) >= 2:
             type_node = node.args[1]
             if isinstance(type_node, ast.Name):
                 port_type = self._simplify_type_name(type_node.id)
             elif isinstance(type_node, ast.Attribute):
                 port_type = self._simplify_type_name(type_node.attr)
-        
-        result = {'id': port_id, 'name': port_name, 'type': port_type}
-        
+
+        result = {"id": port_id, "name": port_name, "type": port_type}
+
         # Mark as multiple if it's a MultiInput
-        if func_name == 'MultiInput':
-            result['multiple'] = True
-        
+        if func_name == "MultiInput":
+            result["multiple"] = True
+
         return result
-    
+
     def _simplify_type_name(self, type_name: str) -> str:
         """Simplify Orange3 type names."""
         type_map = {
-            'Table': 'Data',
-            'Domain': 'Data',
-            'Learner': 'Learner',
-            'Model': 'Model',
-            'DistMatrix': 'Distance',
-            'Corpus': 'Corpus',
+            "Table": "Data",
+            "Domain": "Data",
+            "Learner": "Learner",
+            "Model": "Model",
+            "DistMatrix": "Distance",
+            "Corpus": "Corpus",
         }
         return type_map.get(type_name, type_name)
-    
+
     def _get_constant_value(self, node) -> Optional[str]:
         """Get constant value from AST node."""
         if isinstance(node, ast.Constant):
             return node.value
-        if hasattr(ast, 'Str') and isinstance(node, ast.Str):
+        if hasattr(ast, "Str") and isinstance(node, ast.Str):
             return node.s
-        
+
         # Handle Orange3 i18n format
         if isinstance(node, ast.Subscript):
             slice_node = node.slice
@@ -1452,40 +1536,43 @@ class WidgetDiscovery:
                     val = self._get_constant_value(elt)
                     if isinstance(val, str):
                         return val
-        
+
         return None
-    
+
     def _generate_widget_id(self, name: str) -> str:
         """Generate a URL-friendly widget ID from name."""
         widget_id = name.lower()
-        widget_id = re.sub(r'[^a-z0-9]+', '-', widget_id)
-        return widget_id.strip('-')
-    
+        widget_id = re.sub(r"[^a-z0-9]+", "-", widget_id)
+        return widget_id.strip("-")
+
     def _format_result(self) -> Dict[str, Any]:
         """Format the discovery result."""
         sorted_categories = sorted(
-            self.categories.values(),
-            key=lambda c: c.get('priority', 10)
+            self.categories.values(), key=lambda c: c.get("priority", 10)
         )
-        
+
         formatted_categories = []
         for cat in sorted_categories:
-            if not cat['widgets']:
+            if not cat["widgets"]:
                 continue
-            
-            sorted_widgets = sorted(cat['widgets'], key=lambda w: (w.get('priority', 9999), w['name']))
-            
-            formatted_categories.append({
-                'name': cat['name'],
-                'color': cat['background'],
-                'priority': cat['priority'],
-                'widgets': sorted_widgets
-            })
-        
+
+            sorted_widgets = sorted(
+                cat["widgets"], key=lambda w: (w.get("priority", 9999), w["name"])
+            )
+
+            formatted_categories.append(
+                {
+                    "name": cat["name"],
+                    "color": cat["background"],
+                    "priority": cat["priority"],
+                    "widgets": sorted_widgets,
+                }
+            )
+
         return {
-            'categories': formatted_categories,
-            'widgets': self.widgets,
-            'total': len(self.widgets)
+            "categories": formatted_categories,
+            "widgets": self.widgets,
+            "total": len(self.widgets),
         }
 
 
@@ -1509,20 +1596,19 @@ def discover_widgets(orange3_path: Optional[str] = None) -> Dict[str, Any]:
 
 __all__ = [
     # Orange3 availability
-    'ORANGE3_AVAILABLE',
-    'get_availability',
+    "ORANGE3_AVAILABLE",
+    "get_availability",
     # Adapters
-    'OrangeRegistryAdapter',
-    'OrangeSchemeAdapter',
+    "OrangeRegistryAdapter",
+    "OrangeSchemeAdapter",
     # Data classes
-    'WebSchemeNode',
-    'WebSchemeLink',
-    'WebAnnotation',
+    "WebSchemeNode",
+    "WebSchemeLink",
+    "WebAnnotation",
     # Widget discovery
-    'WidgetDiscovery',
-    'discover_widgets',
-    'get_widget_discovery',
-    'CATEGORY_COLORS',
-    'CATEGORY_PRIORITIES',
+    "WidgetDiscovery",
+    "discover_widgets",
+    "get_widget_discovery",
+    "CATEGORY_COLORS",
+    "CATEGORY_PRIORITIES",
 ]
-

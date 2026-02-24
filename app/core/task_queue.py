@@ -57,7 +57,7 @@ _progress_buffer_lock = asyncio.Lock()
 _PROGRESS_DEBOUNCE_SECS = 0.5  # skip DB write if last write was < 0.5 s ago
 
 
-def task(name: str = None, max_retries: int = 3, priority: int = TaskPriority.NORMAL):
+def task(name: str = None, max_retries: int = 3, priority: int = TaskPriority.NORMAL) -> Callable:
     """
     태스크 데코레이터.
 
@@ -233,19 +233,19 @@ _progress_callback: Optional[Callable] = None
 _completion_callback: Optional[Callable] = None
 
 
-def set_progress_callback(callback: Callable):
+def set_progress_callback(callback: Callable) -> None:
     """진행률 알림 콜백 설정."""
     global _progress_callback
     _progress_callback = callback
 
 
-def set_completion_callback(callback: Callable):
+def set_completion_callback(callback: Callable) -> None:
     """완료 알림 콜백 설정."""
     global _completion_callback
     _completion_callback = callback
 
 
-async def _notify_progress(task_id: str, progress: float, message: str = None):
+async def _notify_progress(task_id: str, progress: float, message: str = None) -> None:
     """진행률 변경 알림."""
     if _progress_callback:
         try:
@@ -256,7 +256,7 @@ async def _notify_progress(task_id: str, progress: float, message: str = None):
 
 async def _notify_completion(
     task_id: str, status: str, result: Any = None, error: str = None
-):
+) -> None:
     """완료/실패 알림."""
     if _completion_callback:
         try:
@@ -385,7 +385,7 @@ async def fetch_next_task(
         return task
 
 
-async def complete_task(task_id: str, result: Any = None):
+async def complete_task(task_id: str, result: Any = None) -> None:
     """
     태스크 완료 처리.
 
@@ -412,7 +412,7 @@ async def complete_task(task_id: str, result: Any = None):
     await _notify_completion(task_id, TaskStatus.COMPLETED, result)
 
 
-async def fail_task(task_id: str, error: str, retry: bool = True):
+async def fail_task(task_id: str, error: str, retry: bool = True) -> None:
     """
     태스크 실패 처리.
 
@@ -598,7 +598,7 @@ class TaskWorker:
         # PostgreSQL, MySQL 8+, Oracle은 지원
         return True
 
-    async def start(self):
+    async def start(self) -> None:
         """워커 시작."""
         self._running = True
 
@@ -628,12 +628,12 @@ class TaskWorker:
                 logger.exception(f"Worker error: {e}")
                 await asyncio.sleep(self.poll_interval)
 
-    async def stop(self):
+    async def stop(self) -> None:
         """워커 중지."""
         self._running = False
         logger.info(f"Worker stopping: {self.worker_id}")
 
-    async def _execute_task(self, task: TaskQueueDB):
+    async def _execute_task(self, task: TaskQueueDB) -> None:
         """태스크 실행."""
         handler = _task_handlers.get(task.task_name)
 
@@ -695,7 +695,7 @@ async def start_worker(poll_interval: float = 1.0) -> TaskWorker:
     return _worker
 
 
-async def stop_worker():
+async def stop_worker() -> None:
     """백그라운드 워커 중지."""
     global _worker, _worker_task
 
