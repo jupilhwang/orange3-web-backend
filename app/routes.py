@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import site
+import threading
 import uuid
 from typing import Dict, Any, Optional, List
 
@@ -626,29 +627,36 @@ async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
 
 # Cache for discovered widgets (refreshed on startup)
 _discovered_widgets = None
+_discovered_widgets_lock = threading.Lock()
 
 
 def get_discovered_widgets():
-    """Get or discover widgets from Orange3 installation.
+    """Get or discover widgets from Orange3 installation (thread-safe singleton).
 
     Priority:
     1. Use discover_widgets() (includes Orange3-Text and all add-ons)
     2. Fall back to OrangeRegistryAdapter if discover_widgets() fails
     """
     global _discovered_widgets
-    if _discovered_widgets is None:
+    if _discovered_widgets is not None:
+        return _discovered_widgets
+    with _discovered_widgets_lock:
+        if _discovered_widgets is not None:  # double-check after acquiring lock
+            return _discovered_widgets
+
         # Primary: Use discover_widgets() - includes Orange3-Text widgets
         if DISCOVERY_AVAILABLE:
             try:
                 logger.info("Using discover_widgets() for widget discovery...")
-                _discovered_widgets = discover_widgets()
-                total = _discovered_widgets.get("total", 0)
-                categories = _discovered_widgets.get("categories", [])
+                result = discover_widgets()
+                total = result.get("total", 0)
+                categories = result.get("categories", [])
                 logger.info(
                     f"Discovered {total} widgets in {len(categories)} categories"
                 )
 
                 if total > 0:
+                    _discovered_widgets = result
                     return _discovered_widgets
             except Exception as e:
                 logger.warning(f"discover_widgets() failed: {e}")

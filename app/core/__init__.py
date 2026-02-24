@@ -28,7 +28,9 @@ from .config import (
 from .database import (
     Base,
     engine,
+    get_engine,
     async_session_maker,
+    get_session_maker,
     init_db,
     get_db,
     close_db,
@@ -120,7 +122,9 @@ __all__ = [
     # database
     "Base",
     "engine",
+    "get_engine",
     "async_session_maker",
+    "get_session_maker",
     "init_db",
     "get_db",
     "close_db",
@@ -185,4 +189,3 @@ __all__ = [
     "delete_cache_item",
     "ORANGE_TEXT_AVAILABLE",
 ]
-

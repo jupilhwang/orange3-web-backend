@@ -26,6 +26,7 @@ from fastapi.responses import Response
 import ipaddress
 import os
 import logging
+import threading
 from urllib.parse import urlparse
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -210,6 +211,7 @@ from .widgets import (
 )
 from .core.task_api import router as task_api_router
 from .core.config import get_upload_dir, get_config
+from .core.mock_data import get_mock_data_info
 from .routes import (
     workflow_router,
     widget_registry_router,
@@ -240,24 +242,169 @@ tenant_manager = TenantManager()
 # Widget registry (singleton, read-only after initialization)
 _registry: Optional[Any] = None
 _registry_initialized = False
+_registry_lock = threading.Lock()
 
 
 def get_registry():
     """Get or create the widget registry (thread-safe singleton)."""
     global _registry, _registry_initialized
-    if not _registry_initialized:
-        if ORANGE_AVAILABLE:
-            _registry = OrangeRegistryAdapter()
-            _registry.discover_widgets()
-        else:
-            _registry = None
-        _registry_initialized = True
+    if _registry_initialized:
+        return _registry
+    with _registry_lock:
+        if not _registry_initialized:  # double-check after acquiring lock
+            if ORANGE_AVAILABLE:
+                _registry = OrangeRegistryAdapter()
+                _registry.discover_widgets()
+            else:
+                _registry = None
+            _registry_initialized = True
     return _registry
 
 
 # ============================================================================
-# Lifespan
+# Lifespan helpers
 # ============================================================================
+
+
+def _init_telemetry(fastapi_app: FastAPI) -> None:
+    """Initialize OpenTelemetry if available and enabled."""
+    if not (OTEL_AVAILABLE and init_telemetry):
+        return
+
+    otel_endpoint = os.getenv("OTEL_ENDPOINT")
+    otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
+
+    if otel_enabled:
+        config = TelemetryConfig(
+            service_name="orange3-web-backend",
+            service_version=SERVER_VERSION,
+            environment=os.getenv("ENVIRONMENT", "development"),
+            otel_endpoint=otel_endpoint,
+            enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+        )
+        init_telemetry(fastapi_app, config)
+        print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
+
+
+async def _init_database() -> None:
+    """Initialize database tables."""
+    print("\n📦 Initializing database...")
+    await init_db()
+    print("   Database ready (SQLite with WAL mode)")
+
+
+def _init_registry() -> None:
+    """Pre-load widget registry and wire up router dependencies."""
+    availability = get_availability()
+    print(
+        f"\n🍊 Orange3: {'✓ Available' if availability.get('orange3') else '✗ Not available'}"
+    )
+
+    if not availability.get("orange3"):
+        print("   Install with: pip install Orange3")
+
+    registry = get_registry()
+    if registry:
+        categories = registry.list_categories()
+        widgets = registry.list_widgets()
+        print(f"\n📊 Discovered {len(widgets)} widgets in {len(categories)} categories")
+
+    set_registry_getter(get_registry)
+    set_widget_registry_getter(get_registry)
+
+
+async def _init_task_worker() -> bool:
+    """Start background task worker if enabled. Returns whether worker was started."""
+    task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
+    if not task_worker_enabled:
+        return False
+
+    from .core.task_queue import (
+        start_worker,
+        cleanup_stale_tasks,
+        set_progress_callback,
+        set_completion_callback,
+    )
+
+    # Import tasks to register them
+    import app.tasks  # noqa: F401
+
+    # Wire WebSocket callbacks for task progress/completion
+    async def on_progress(task_id: str, progress: float, message: str = None):
+        from .core.task_queue import get_task_status
+
+        task_info = await get_task_status(task_id)
+        if task_info:
+            await task_ws_manager.send_progress(
+                task_id, task_info["tenant_id"], progress, message
+            )
+
+    async def on_completion(task_id: str, status: str, result=None, error=None):
+        from .core.task_queue import get_task_status
+
+        task_info = await get_task_status(task_id)
+        if task_info:
+            await task_ws_manager.send_completion(
+                task_id, task_info["tenant_id"], status, result, error
+            )
+
+    set_progress_callback(on_progress)
+    set_completion_callback(on_completion)
+
+    await start_worker(poll_interval=1.0)
+    await cleanup_stale_tasks(timeout_minutes=30)
+    print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
+    return True
+
+
+async def _init_mdns(app_config) -> Optional[Any]:
+    """Register mDNS service for discovery if configured. Returns mdns_service or None."""
+    mdns_config = app_config.mdns
+
+    if not mdns_config.enabled:
+        print("\n📡 mDNS disabled in configuration")
+        return None
+
+    if not is_mdns_available():
+        print("\n📡 mDNS disabled (zeroconf not installed)")
+        print("   Install with: pip install zeroconf")
+        return None
+
+    print("\n📡 mDNS Service Discovery...")
+
+    service_type = mdns_config.service_type
+    if not service_type.endswith(".local."):
+        service_type = service_type + (
+            "local." if service_type.endswith(".") else ".local."
+        )
+
+    mdns_svc_config = MDNSServiceConfig(
+        enabled=mdns_config.enabled,
+        service_type=service_type,
+        service_name=mdns_config.service_name,
+        port=app_config.server.port,  # use server.port, not mdns.port
+        multicast_address=mdns_config.multicast_address,
+        udp_port=mdns_config.udp_port,
+        interface=mdns_config.interface,
+    )
+
+    mdns_service = MDNSService(mdns_svc_config)
+    set_mdns_service(mdns_service)
+
+    txt_properties = {
+        "version": SERVER_VERSION,
+        "weight": "1",
+        "environment": os.getenv("ENVIRONMENT", "development"),
+    }
+
+    await mdns_service.register(txt_properties)
+
+    print(f"   Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}")
+    if mdns_config.interface:
+        print(f"   Interface: {mdns_config.interface}")
+
+    return mdns_service
 
 
 @asynccontextmanager
@@ -268,170 +415,38 @@ async def lifespan(fastapi_app: FastAPI):
     print("Starting Orange3 Web Backend...")
     print("=" * 60)
 
-    # Initialize OpenTelemetry
-    if OTEL_AVAILABLE and init_telemetry:
-        otel_endpoint = os.getenv("OTEL_ENDPOINT")
-        otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
+    _init_telemetry(fastapi_app)
 
-        if otel_enabled:
-            config = TelemetryConfig(
-                service_name="orange3-web-backend",
-                service_version=SERVER_VERSION,
-                environment=os.getenv("ENVIRONMENT", "development"),
-                otel_endpoint=otel_endpoint,
-                enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
-                log_level=os.getenv("LOG_LEVEL", "INFO"),
-            )
-            init_telemetry(fastapi_app, config)
-            print(f"✅ OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
-
-    # Get mDNS configuration from config file
     app_config = get_config()
-    mdns_config = app_config.mdns
 
-    # mDNS service instance
-    mdns_service = None
+    await _init_database()
+    _init_registry()
 
-    # Initialize database
-    print("\n📦 Initializing database...")
-    await init_db()
-    print("   Database ready (SQLite with WAL mode)")
-
-    # Check Orange3 availability
-    availability = get_availability()
-    print(
-        f"\n🍊 Orange3: {'✓ Available' if availability.get('orange3') else '✗ Not available'}"
-    )
-
-    if not availability.get("orange3"):
-        print("   Install with: pip install Orange3")
-
-    # Pre-load registry
-    registry = get_registry()
-    if registry:
-        categories = registry.list_categories()
-        widgets = registry.list_widgets()
-        print(f"\n📊 Discovered {len(widgets)} widgets in {len(categories)} categories")
-
-    # Setup workflow router dependencies
-    set_registry_getter(get_registry)
     set_websocket_manager(task_ws_manager)
-
-    # Setup widget registry router dependencies
-    set_widget_registry_getter(get_registry)
-
     print("\n🔒 Async locks enabled for concurrent access protection")
 
-    # Start Task Queue Worker
-    task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
-    if task_worker_enabled:
-        from .core.task_queue import (
-            start_worker,
-            cleanup_stale_tasks,
-            set_progress_callback,
-            set_completion_callback,
-        )
+    task_worker_enabled = await _init_task_worker()
 
-        # Import tasks to register them
-        import app.tasks  # noqa: F401
-
-        # Setup WebSocket callbacks for task progress/completion
-        async def on_progress(task_id: str, progress: float, message: str = None):
-            # Get tenant_id from task
-            from .core.task_queue import get_task_status
-
-            task_info = await get_task_status(task_id)
-            if task_info:
-                await task_ws_manager.send_progress(
-                    task_id, task_info["tenant_id"], progress, message
-                )
-
-        async def on_completion(task_id: str, status: str, result=None, error=None):
-            from .core.task_queue import get_task_status
-
-            task_info = await get_task_status(task_id)
-            if task_info:
-                await task_ws_manager.send_completion(
-                    task_id, task_info["tenant_id"], status, result, error
-                )
-
-        set_progress_callback(on_progress)
-        set_completion_callback(on_completion)
-
-        await start_worker(poll_interval=1.0)
-        await cleanup_stale_tasks(timeout_minutes=30)
-        print("\n📋 Task Queue worker started (WebSocket notifications enabled)")
-
-    # Register with mDNS for service discovery
-    if mdns_config.enabled and is_mdns_available():
-        print("\n📡 mDNS Service Discovery...")
-
-        # Create mDNS service config (IPv4 only)
-        # Ensure service_type ends with ".local."
-        service_type = mdns_config.service_type
-        if not service_type.endswith(".local."):
-            if service_type.endswith("."):
-                service_type = service_type + "local."
-            else:
-                service_type = service_type + ".local."
-
-        # Use server.port for mDNS service port (not mdns.port)
-        server_port = app_config.server.port
-
-        mdns_svc_config = MDNSServiceConfig(
-            enabled=mdns_config.enabled,
-            service_type=service_type,
-            service_name=mdns_config.service_name,
-            port=server_port,  # Use server.port instead of mdns.port
-            multicast_address=mdns_config.multicast_address,
-            udp_port=mdns_config.udp_port,
-            interface=mdns_config.interface,
-        )
-
-        # Create and register mDNS service
-        mdns_service = MDNSService(mdns_svc_config)
-        set_mdns_service(mdns_service)
-
-        # TXT record properties for service metadata
-        txt_properties = {
-            "version": SERVER_VERSION,
-            "weight": "1",
-            "environment": os.getenv("ENVIRONMENT", "development"),
-        }
-
-        await mdns_service.register(txt_properties)
-
-        print(f"   Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}")
-        if mdns_config.interface:
-            print(f"   Interface: {mdns_config.interface}")
-    elif mdns_config.enabled:
-        print("\n📡 mDNS disabled (zeroconf not installed)")
-        print("   Install with: pip install zeroconf")
-    else:
-        print("\n📡 mDNS disabled in configuration")
-
-    # Store mDNS service in app state for cleanup
+    mdns_service = await _init_mdns(app_config)
     fastapi_app.state.mdns_service = mdns_service
 
     print("=" * 60)
 
     yield
 
-    # Cleanup - Unregister mDNS service
+    # Cleanup
     if fastapi_app.state.mdns_service:
         print("\n📡 Unregistering mDNS service...")
         await fastapi_app.state.mdns_service.unregister()
 
     print("\nShutting down Orange3 Web Backend...")
 
-    # Stop Task Queue Worker
     if task_worker_enabled:
         from .core.task_queue import stop_worker
 
         await stop_worker()
         print("Task Queue worker stopped.")
 
-    # Shutdown CPU/IO executor pools
     from .core.data_utils import shutdown_executors
 
     shutdown_executors()
@@ -760,265 +775,6 @@ def _extract_domain_columns(domain) -> list[dict]:
             }
         )
     return columns
-
-
-def get_mock_data_info(path: str):
-    """Return mock data info for known datasets when Orange3 is not available."""
-    path_lower = path.lower()
-
-    if "iris" in path_lower:
-        return {
-            "name": "Iris",
-            "description": "Fisher's Iris dataset with measurements of iris flowers.",
-            "instances": 150,
-            "features": 4,
-            "missingValues": False,
-            "classType": "Classification",
-            "classValues": 3,
-            "metaAttributes": 0,
-            "columns": [
-                {
-                    "name": "sepal length",
-                    "type": "numeric",
-                    "role": "feature",
-                    "values": "",
-                },
-                {
-                    "name": "sepal width",
-                    "type": "numeric",
-                    "role": "feature",
-                    "values": "",
-                },
-                {
-                    "name": "petal length",
-                    "type": "numeric",
-                    "role": "feature",
-                    "values": "",
-                },
-                {
-                    "name": "petal width",
-                    "type": "numeric",
-                    "role": "feature",
-                    "values": "",
-                },
-                {
-                    "name": "iris",
-                    "type": "categorical",
-                    "role": "target",
-                    "values": "Iris-setosa, Iris-versicolor, Iris-virginica",
-                },
-            ],
-        }
-    elif "titanic" in path_lower:
-        return {
-            "name": "Titanic dataset",
-            "description": "Passenger survival data from the Titanic disaster.",
-            "instances": 1309,
-            "features": 10,
-            "missingValues": True,
-            "classType": "Classification",
-            "classValues": 2,
-            "metaAttributes": 0,
-            "columns": [
-                {
-                    "name": "pclass",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "first, second, third",
-                },
-                {
-                    "name": "sex",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "female, male",
-                },
-                {"name": "age", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "sibsp", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "parch", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "fare", "type": "numeric", "role": "feature", "values": ""},
-                {
-                    "name": "embarked",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "C, Q, S",
-                },
-                {
-                    "name": "survived",
-                    "type": "categorical",
-                    "role": "target",
-                    "values": "no, yes",
-                },
-            ],
-        }
-    elif "housing" in path_lower:
-        return {
-            "name": "Housing",
-            "description": "Boston housing dataset with median home values.",
-            "instances": 506,
-            "features": 13,
-            "missingValues": False,
-            "classType": "Regression",
-            "classValues": None,
-            "metaAttributes": 0,
-            "columns": [
-                {"name": "CRIM", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "ZN", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "INDUS", "type": "numeric", "role": "feature", "values": ""},
-                {
-                    "name": "CHAS",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {"name": "NOX", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "RM", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "AGE", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "DIS", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "RAD", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "TAX", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "PTRATIO", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "B", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "LSTAT", "type": "numeric", "role": "feature", "values": ""},
-                {"name": "MEDV", "type": "numeric", "role": "target", "values": ""},
-            ],
-        }
-    elif "zoo" in path_lower:
-        return {
-            "name": "Zoo",
-            "description": "Zoo animal classification dataset.",
-            "instances": 101,
-            "features": 16,
-            "missingValues": False,
-            "classType": "Classification",
-            "classValues": 7,
-            "metaAttributes": 1,
-            "columns": [
-                {
-                    "name": "hair",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "feathers",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "eggs",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "milk",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "airborne",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "aquatic",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "predator",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "toothed",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "backbone",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "breathes",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "venomous",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "fins",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {"name": "legs", "type": "numeric", "role": "feature", "values": ""},
-                {
-                    "name": "tail",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "domestic",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "catsize",
-                    "type": "categorical",
-                    "role": "feature",
-                    "values": "0, 1",
-                },
-                {
-                    "name": "type",
-                    "type": "categorical",
-                    "role": "target",
-                    "values": "mammal, bird, reptile, fish, amphibian, insect, invertebrate",
-                },
-                {"name": "name", "type": "categorical", "role": "meta", "values": ""},
-            ],
-        }
-
-    # Generic fallback for unknown datasets
-    filename = path.split("/")[-1]
-    return {
-        "name": filename,
-        "description": f"Dataset loaded from {filename}",
-        "instances": 100,
-        "features": 5,
-        "missingValues": False,
-        "classType": "Classification",
-        "classValues": 2,
-        "metaAttributes": 0,
-        "columns": [
-            {"name": "feature1", "type": "numeric", "role": "feature", "values": ""},
-            {"name": "feature2", "type": "numeric", "role": "feature", "values": ""},
-            {"name": "feature3", "type": "numeric", "role": "feature", "values": ""},
-            {"name": "feature4", "type": "numeric", "role": "feature", "values": ""},
-            {"name": "feature5", "type": "numeric", "role": "feature", "values": ""},
-            {
-                "name": "class",
-                "type": "categorical",
-                "role": "target",
-                "values": "Class A, Class B",
-            },
-        ],
-    }
 
 
 @api_v1.get("/data/load", tags=["Data"])
