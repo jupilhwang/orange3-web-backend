@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from .core import lock_workflow, lock_tenant, get_current_tenant
 from .core.models import Tenant
-from .websocket_manager import WebSocketManager
+from .websocket_manager import TaskWebSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -71,16 +71,16 @@ _adapters_lock = asyncio.Lock()
 _registry_getter = None
 
 # WebSocket manager reference (set by main.py)
-_websocket_manager: Optional[WebSocketManager] = None
+_websocket_manager: Optional[TaskWebSocketManager] = None
 
 
-def set_registry_getter(getter):
+def set_registry_getter(getter) -> None:
     """Set the registry getter function."""
     global _registry_getter
     _registry_getter = getter
 
 
-def set_websocket_manager(manager: WebSocketManager):
+def set_websocket_manager(manager: TaskWebSocketManager) -> None:
     """Set the WebSocket manager instance."""
     global _websocket_manager
     _websocket_manager = manager
@@ -154,7 +154,7 @@ class WorkflowCreate(BaseModel):
 
 
 @workflow_router.get("/workflows")
-async def list_workflows(tenant: Tenant = Depends(get_current_tenant)):
+async def list_workflows(tenant: Tenant = Depends(get_current_tenant)) -> list:
     """List all workflows for tenant."""
     result = []
 
@@ -198,7 +198,7 @@ async def list_workflows(tenant: Tenant = Depends(get_current_tenant)):
 @workflow_router.post("/workflows")
 async def create_workflow(
     data: WorkflowCreate, tenant: Tenant = Depends(get_current_tenant)
-):
+) -> dict:
     """Create a new workflow. Creates a new Scheme instance."""
     workflow_id = str(uuid.uuid4())
 
@@ -216,7 +216,9 @@ async def create_workflow(
 
 
 @workflow_router.get("/workflows/{workflow_id}")
-async def get_workflow(workflow_id: str, tenant: Tenant = Depends(get_current_tenant)):
+async def get_workflow(
+    workflow_id: str, tenant: Tenant = Depends(get_current_tenant)
+) -> dict:
     """Get workflow details. Returns the full Scheme structure."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -235,7 +237,7 @@ async def get_workflow(workflow_id: str, tenant: Tenant = Depends(get_current_te
 @workflow_router.delete("/workflows/{workflow_id}")
 async def delete_workflow(
     workflow_id: str, tenant: Tenant = Depends(get_current_tenant)
-):
+) -> dict:
     """Delete a workflow."""
     deleted = await delete_workflow_adapter(tenant.id, workflow_id)
     if deleted:
@@ -246,7 +248,7 @@ async def delete_workflow(
 @workflow_router.get("/workflows/{workflow_id}/export")
 async def export_workflow(
     workflow_id: str, tenant: Tenant = Depends(get_current_tenant)
-):
+) -> Response:
     """Export workflow as .ows. Uses existing scheme_to_ows_stream function."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -307,7 +309,7 @@ def _safe_serialize(obj: Any, allow_objects: bool = True) -> Any:
 
 
 @workflow_router.post("/ows/decode_pickle")
-async def decode_ows_pickle(data: DecodePickleRequest):
+async def decode_ows_pickle(data: DecodePickleRequest) -> dict:
     """Decode a base64-encoded Orange3 pickle string into a JSON-friendly dict."""
     try:
         binary_data = base64.b64decode(data.pickle_data)
@@ -321,7 +323,7 @@ async def decode_ows_pickle(data: DecodePickleRequest):
 
 
 @workflow_router.post("/ows/decode_literal")
-async def decode_ows_literal(data: DecodeLiteralRequest):
+async def decode_ows_literal(data: DecodeLiteralRequest) -> Any:
     """Decode a Python literal string (from OWS format='literal') into a JSON-friendly dict."""
     try:
         import ast
@@ -371,7 +373,7 @@ async def add_node(
     workflow_id: str,
     node: NodeCreateRequest,
     tenant: Tenant = Depends(get_current_tenant),
-):
+) -> dict:
     """Add a node. Uses existing SchemeNode class."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -411,7 +413,7 @@ async def add_node(
 @workflow_router.delete("/workflows/{workflow_id}/nodes/{node_id}", tags=["Nodes"])
 async def delete_node(
     workflow_id: str, node_id: str, tenant: Tenant = Depends(get_current_tenant)
-):
+) -> dict:
     """Delete a node. Uses existing Scheme.remove_node method."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -438,7 +440,7 @@ async def update_node_position(
     node_id: str,
     position: NodePositionUpdate,
     tenant: Tenant = Depends(get_current_tenant),
-):
+) -> dict:
     """Update node position."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -471,7 +473,7 @@ async def add_link(
     workflow_id: str,
     link: LinkCreateRequest,
     tenant: Tenant = Depends(get_current_tenant),
-):
+) -> dict:
     """Add a link. Uses existing SchemeLink class and compatible_channels function."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -503,7 +505,7 @@ async def add_link(
 @workflow_router.delete("/workflows/{workflow_id}/links/{link_id}", tags=["Links"])
 async def delete_link(
     workflow_id: str, link_id: str, tenant: Tenant = Depends(get_current_tenant)
-):
+) -> dict:
     """Delete a link. Uses existing Scheme.remove_link method."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -553,7 +555,7 @@ async def add_text_annotation(
     workflow_id: str,
     annotation: TextAnnotationCreate,
     tenant: Tenant = Depends(get_current_tenant),
-):
+) -> dict:
     """Add text annotation. Uses existing SchemeTextAnnotation class."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -578,7 +580,7 @@ async def add_arrow_annotation(
     workflow_id: str,
     annotation: ArrowAnnotationCreate,
     tenant: Tenant = Depends(get_current_tenant),
-):
+) -> dict:
     """Add arrow annotation. Uses existing SchemeArrowAnnotation class."""
     adapter = await get_workflow_adapter(tenant.id, workflow_id)
     if not adapter:
@@ -601,7 +603,7 @@ async def add_arrow_annotation(
 # ============================================================================
 
 
-async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
+async def websocket_endpoint(websocket: WebSocket, workflow_id: str) -> None:
     """WebSocket for real-time updates."""
     if not _websocket_manager:
         await websocket.close(code=1011)
@@ -630,7 +632,7 @@ _discovered_widgets = None
 _discovered_widgets_lock = threading.Lock()
 
 
-def get_discovered_widgets():
+def get_discovered_widgets() -> dict:
     """Get or discover widgets from Orange3 installation (thread-safe singleton).
 
     Priority:
@@ -706,7 +708,7 @@ def get_discovered_widgets():
 
 
 @widget_registry_router.get("")
-async def list_widgets(category: Optional[str] = None):
+async def list_widgets(category: Optional[str] = None) -> list:
     """List all widgets discovered from Orange3 installation."""
     discovered = get_discovered_widgets()
     widgets = discovered.get("widgets", [])
@@ -718,7 +720,7 @@ async def list_widgets(category: Optional[str] = None):
 
 
 @widget_registry_router.get("/categories")
-async def list_categories():
+async def list_categories() -> list:
     """List widget categories discovered from Orange3."""
     discovered = get_discovered_widgets()
     categories = discovered.get("categories", [])
@@ -736,14 +738,14 @@ async def list_categories():
 
 
 @widget_registry_router.get("/all")
-async def get_all_widgets():
+async def get_all_widgets() -> dict:
     """Get all categories with their widgets (for frontend toolbox)."""
     discovered = get_discovered_widgets()
     return discovered
 
 
 @widget_registry_router.get("/{widget_id}")
-async def get_widget(widget_id: str):
+async def get_widget(widget_id: str) -> dict:
     """Get widget description by ID."""
     discovered = get_discovered_widgets()
     widgets = discovered.get("widgets", [])
@@ -756,7 +758,7 @@ async def get_widget(widget_id: str):
 
 
 @widget_registry_router.post("/check-compatibility")
-async def check_compatibility(source_types: List[str], sink_types: List[str]):
+async def check_compatibility(source_types: List[str], sink_types: List[str]) -> dict:
     """Check channel compatibility between source and sink types."""
     compatible = any(
         st == sk or st == "Any" or sk == "Any"
@@ -767,7 +769,7 @@ async def check_compatibility(source_types: List[str], sink_types: List[str]):
 
 
 @widget_registry_router.post("/refresh")
-async def refresh_widgets():
+async def refresh_widgets() -> dict:
     """Force refresh of widget discovery cache."""
     global _discovered_widgets
     _discovered_widgets = None
@@ -780,7 +782,7 @@ async def refresh_widgets():
 # ============================================================================
 
 
-async def legacy_widgets_handler():
+async def legacy_widgets_handler() -> dict:
     """
     Legacy endpoint handler for frontend compatibility.
     Returns widgets grouped by category.

@@ -124,7 +124,9 @@ class TaskWebSocketManager:
         for ws in disconnected:
             self.disconnect(ws, tenant_id)
 
-    async def broadcast_to_tenant(self, tenant_id: str, message: Dict[str, Any]) -> None:
+    async def broadcast_to_tenant(
+        self, tenant_id: str, message: Dict[str, Any]
+    ) -> None:
         """테넌트의 모든 연결에 브로드캐스트."""
         if tenant_id not in self._connections:
             return
@@ -152,6 +154,8 @@ class TaskWebSocketManager:
 # 전역 인스턴스
 task_ws_manager = TaskWebSocketManager()
 
-# 호환성을 위한 alias (협업 기능 제거 후에도 routes.py에서 사용)
-# TODO: routes.py에서 WebSocketManager 사용 부분 정리 필요
+# Backward-compatibility alias: routes.py previously imported this as `WebSocketManager`.
+# The alias is kept here so existing code that may still reference it at runtime
+# continues to work without breaking changes. routes.py has been updated to import
+# TaskWebSocketManager directly; this alias can be removed once all callers are updated.
 WebSocketManager = TaskWebSocketManager

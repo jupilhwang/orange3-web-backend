@@ -169,6 +169,7 @@ from .core.models import (
 # Managers
 from .core import TenantManager, get_current_tenant
 from .websocket_manager import TaskWebSocketManager, task_ws_manager
+from .workflow_manager import WorkflowManager
 
 # OpenTelemetry
 try:
@@ -244,6 +245,9 @@ _registry: Optional[Any] = None
 _registry_initialized = False
 _registry_lock = threading.Lock()
 
+# WorkflowManager singleton (initialized in lifespan after registry is ready)
+workflow_manager: Optional[WorkflowManager] = None
+
 
 def get_registry() -> Optional[Any]:
     """Get or create the widget registry (thread-safe singleton)."""
@@ -296,6 +300,8 @@ async def _init_database() -> None:
 
 def _init_registry() -> None:
     """Pre-load widget registry and wire up router dependencies."""
+    global workflow_manager
+
     availability = get_availability()
     logger.info(
         f"Orange3: {'Available' if availability.get('orange3') else 'Not available'}"
@@ -314,6 +320,18 @@ def _init_registry() -> None:
 
     set_registry_getter(get_registry)
     set_widget_registry_getter(get_registry)
+
+    # Initialize WorkflowManager with the registry so link type-compatibility
+    # checks use discovered widget channel types.
+    workflow_manager = WorkflowManager(registry=registry)
+    logger.info(
+        "WorkflowManager initialized"
+        + (
+            " with registry"
+            if registry
+            else " (no registry — permissive link validation)"
+        )
+    )
 
 
 async def _init_task_worker() -> bool:
@@ -342,7 +360,9 @@ async def _init_task_worker() -> bool:
                 task_id, task_info["tenant_id"], progress, message
             )
 
-    async def on_completion(task_id: str, status: str, result: Any = None, error: str = None) -> None:
+    async def on_completion(
+        task_id: str, status: str, result: Any = None, error: str = None
+    ) -> None:
         from .core.task_queue import get_task_status
 
         task_info = await get_task_status(task_id)
@@ -524,8 +544,14 @@ class ProxyHeadersMiddleware:
         if scope["type"] in ("http", "websocket"):
             client = scope.get("client")
             if client:
-                client_ip = ipaddress.ip_address(client[0])
-                is_trusted = any(client_ip in network for network in self.TRUSTED_CIDRS)
+                try:
+                    client_ip = ipaddress.ip_address(client[0])
+                except ValueError:
+                    # Non-IP client (testclient, Unix socket, etc.) — skip proxy processing
+                    client_ip = None
+                is_trusted = client_ip is not None and any(
+                    client_ip in network for network in self.TRUSTED_CIDRS
+                )
 
                 headers = dict(scope.get("headers", []))
                 if is_trusted:
