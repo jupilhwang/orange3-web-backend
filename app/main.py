@@ -486,9 +486,14 @@ app = FastAPI(
 )
 
 # CORS
+# Allow runtime configuration via CORS_ALLOW_ORIGINS (comma-separated list).
+# Defaults to wildcard "*" for development; set explicit origins in production.
+_cors_env = os.environ.get("CORS_ALLOW_ORIGINS", "*")
+cors_origins = [o.strip() for o in _cors_env.split(",")] if _cors_env != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
