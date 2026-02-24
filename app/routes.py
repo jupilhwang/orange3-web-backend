@@ -279,48 +279,29 @@ class DecodeLiteralRequest(BaseModel):
     literal_data: str
 
 
-def _safe_serialize_pickle(obj):
-    """Recursively convert unpickled objects to JSON-serializable types."""
-    if isinstance(obj, (int, float, str, bool, type(None))):
+def _safe_serialize(obj: Any, allow_objects: bool = True) -> Any:
+    """Safely serialize arbitrary Python objects to JSON-compatible types.
+
+    Args:
+        allow_objects: If True, tries to serialize objects with __dict__.
+                      If False, falls back to str() for unknown types.
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
         return obj
     if isinstance(obj, bytes):
-        # bytes를 base64 문자열로 변환
-        return {"_type": "bytes", "value": base64.b64encode(obj).decode("ascii")}
+        return base64.b64encode(obj).decode("utf-8")
     if isinstance(obj, (set, frozenset)):
-        return list(obj)
+        return [_safe_serialize(item, allow_objects) for item in obj]
     if isinstance(obj, (list, tuple)):
-        return [_safe_serialize_pickle(i) for i in obj]
+        return [_safe_serialize(item, allow_objects) for item in obj]
     if isinstance(obj, dict):
-        return {str(k): _safe_serialize_pickle(v) for k, v in obj.items()}
-
-    # Handle common Orange types if they have __dict__
-    if hasattr(obj, "__dict__"):
-        # Filter out private attributes and potentially circular refs
-        data = {}
-        for k, v in obj.__dict__.items():
-            if not k.startswith("_"):
-                try:
-                    data[str(k)] = _safe_serialize_pickle(v)
-                except Exception:
-                    data[str(k)] = str(v)
-        return data
-
-    return str(obj)
-
-
-def _safe_serialize_literal(obj):
-    """Recursively convert Python literal objects to JSON-serializable types."""
-    if isinstance(obj, (int, float, str, bool, type(None))):
-        return obj
-    if isinstance(obj, bytes):
-        # bytes를 base64 문자열로 변환
-        return {"_type": "bytes", "value": base64.b64encode(obj).decode("ascii")}
-    if isinstance(obj, (set, frozenset)):
-        return list(obj)
-    if isinstance(obj, (list, tuple)):
-        return [_safe_serialize_literal(i) for i in obj]
-    if isinstance(obj, dict):
-        return {str(k): _safe_serialize_literal(v) for k, v in obj.items()}
+        return {str(k): _safe_serialize(v, allow_objects) for k, v in obj.items()}
+    if allow_objects and hasattr(obj, "__dict__"):
+        return {
+            k: _safe_serialize(v, allow_objects)
+            for k, v in obj.__dict__.items()
+            if not k.startswith("_")
+        }
     return str(obj)
 
 
@@ -328,9 +309,9 @@ def _safe_serialize_literal(obj):
 async def decode_ows_pickle(data: DecodePickleRequest):
     """Decode a base64-encoded Orange3 pickle string into a JSON-friendly dict."""
     try:
-        binary_data = base64.b64decode(data.data)
+        binary_data = base64.b64decode(data.pickle_data)
         obj = pickle.loads(binary_data)
-        result = _safe_serialize_pickle(obj)
+        result = _safe_serialize(obj, allow_objects=True)
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(
@@ -356,7 +337,7 @@ async def decode_ows_literal(data: DecodeLiteralRequest):
         obj = ast.literal_eval(literal_str)
 
         # Convert to JSON-compatible structure
-        result = _safe_serialize_literal(obj)
+        result = _safe_serialize(obj, allow_objects=False)
         return result
     except Exception as e:
         logger.error(f"Literal decoding failed: {e}")

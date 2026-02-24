@@ -29,13 +29,14 @@ dependencies = [
     # Orange3 Data Mining
     "orange3>=3.40.0,<4.0",
     "orange3-text>=1.16.3,<2.0",
-    "orange3-imageanalytics>=0.13.0,<1.0",
-    "orange3-geo>=0.5",
-    "orange3-bioinformatics>=4.8.4,<5.0",
-    "orange3-survival-analysis>=0.6.3",
-    "orange3-timeseries>=0.6.3",
-    "orange3-fairness>=1.0.2",
-    "orange3-educational>=0.8.1",
+    
+    # "orange3-imageanalytics>=0.13.0,<1.0",
+    # "orange3-geo>=0.5",
+    # "orange3-bioinformatics>=4.8.4,<5.0",
+    # "orange3-survival-analysis>=0.6.3",
+    # "orange3-timeseries>=0.6.3",
+    # "orange3-fairness>=1.0.2",
+    # "orange3-educational>=0.8.1",
     
     # PyQt6 (for Orange3)
     "pyqt6>=6.10.0,<7.0",

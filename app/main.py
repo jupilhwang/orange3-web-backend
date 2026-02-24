@@ -724,6 +724,44 @@ class UrlLoadRequest(BaseModel):
     url: str
 
 
+def _extract_domain_columns(domain) -> list[dict]:
+    """Extract column metadata from an Orange3 domain."""
+    columns = []
+    for var in domain.attributes:
+        columns.append(
+            {
+                "name": var.name,
+                "type": "numeric" if var.is_continuous else "categorical",
+                "role": "feature",
+                "values": ", ".join(var.values)
+                if hasattr(var, "values") and var.values
+                else "",
+            }
+        )
+    if domain.class_var:
+        var = domain.class_var
+        columns.append(
+            {
+                "name": var.name,
+                "type": "numeric" if var.is_continuous else "categorical",
+                "role": "target",
+                "values": ", ".join(var.values)
+                if hasattr(var, "values") and var.values
+                else "",
+            }
+        )
+    for var in domain.metas:
+        columns.append(
+            {
+                "name": var.name,
+                "type": "numeric" if var.is_continuous else "categorical",
+                "role": "meta",
+                "values": "",
+            }
+        )
+    return columns
+
+
 def get_mock_data_info(path: str):
     """Return mock data info for known datasets when Orange3 is not available."""
     path_lower = path.lower()
@@ -1079,45 +1117,7 @@ async def load_data_from_path(
         data = Table(actual_path)
 
         # Get column info
-        columns = []
-
-        # Features
-        for var in data.domain.attributes:
-            columns.append(
-                {
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "feature",
-                    "values": ", ".join(var.values)
-                    if hasattr(var, "values") and var.values
-                    else "",
-                }
-            )
-
-        # Target
-        if data.domain.class_var:
-            var = data.domain.class_var
-            columns.append(
-                {
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "target",
-                    "values": ", ".join(var.values)
-                    if hasattr(var, "values") and var.values
-                    else "",
-                }
-            )
-
-        # Meta
-        for var in data.domain.metas:
-            columns.append(
-                {
-                    "name": var.name,
-                    "type": "numeric" if var.is_continuous else "categorical",
-                    "role": "meta",
-                    "values": "",
-                }
-            )
+        columns = _extract_domain_columns(data.domain)
 
         # --- Phase 4: Load metadata overrides ---
         from .core.config import get_tenant_upload_dir
@@ -1272,45 +1272,7 @@ async def load_data_from_url(request: UrlLoadRequest):
             data = Table(tmp_path)
 
             # Get column info
-            columns = []
-
-            # Features
-            for var in data.domain.attributes:
-                columns.append(
-                    {
-                        "name": var.name,
-                        "type": "numeric" if var.is_continuous else "categorical",
-                        "role": "feature",
-                        "values": ", ".join(var.values)
-                        if hasattr(var, "values") and var.values
-                        else "",
-                    }
-                )
-
-            # Target
-            if data.domain.class_var:
-                var = data.domain.class_var
-                columns.append(
-                    {
-                        "name": var.name,
-                        "type": "numeric" if var.is_continuous else "categorical",
-                        "role": "target",
-                        "values": ", ".join(var.values)
-                        if hasattr(var, "values") and var.values
-                        else "",
-                    }
-                )
-
-            # Meta
-            for var in data.domain.metas:
-                columns.append(
-                    {
-                        "name": var.name,
-                        "type": "numeric" if var.is_continuous else "categorical",
-                        "role": "meta",
-                        "values": "",
-                    }
-                )
+            columns = _extract_domain_columns(data.domain)
 
             return {
                 "name": url.split("/")[-1],
