@@ -62,7 +62,7 @@ class TelemetryConfig:
     """Configuration for OpenTelemetry."""
 
     service_name: str = "orange3-web-backend"
-    service_version: str = "0.34.1"
+    service_version: str = "0.35.0"
     environment: str = "development"
     otel_endpoint: Optional[str] = None
     enable_console: bool = False
@@ -524,7 +524,7 @@ def init_telemetry(app: FastAPI, config: Optional[TelemetryConfig] = None) -> Te
         # Load from environment or use defaults
         config = TelemetryConfig(
             service_name=os.getenv("OTEL_SERVICE_NAME", "orange3-web-backend"),
-            service_version=os.getenv("SERVICE_VERSION", "0.34.1"),
+            service_version=os.getenv("SERVICE_VERSION", "0.35.0"),
             environment=os.getenv("ENVIRONMENT", "development"),
             otel_endpoint=os.getenv("OTEL_ENDPOINT"),
             enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
