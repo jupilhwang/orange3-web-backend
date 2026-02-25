@@ -14,6 +14,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
@@ -42,11 +43,11 @@ from opentelemetry.trace import Status, StatusCode
 
 # Conditional OTLP imports
 try:
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
         OTLPMetricExporter,
     )
-    from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 
     OTLP_AVAILABLE = True
 except ImportError:
@@ -57,17 +58,48 @@ from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogEx
 from opentelemetry._logs import set_logger_provider
 
 
+# VERSION file path relative to this file: backend/app/core/telemetry.py → backend/VERSION
+_VERSION_FILE = Path(__file__).parent.parent.parent / "VERSION"
+
+
+def _get_version() -> str:
+    """Read service version from VERSION file."""
+    if _VERSION_FILE.exists():
+        try:
+            return _VERSION_FILE.read_text().strip()
+        except Exception:
+            pass
+    return "0.0.0"
+
+
 @dataclass
 class TelemetryConfig:
     """Configuration for OpenTelemetry."""
 
     service_name: str = "orange3-web-backend"
-    service_version: str = "0.35.0"
+    service_version: str = field(default_factory=_get_version)
     environment: str = "development"
     otel_endpoint: Optional[str] = None
     enable_console: bool = False
     log_level: str = "INFO"
     metric_interval_ms: int = 15000
+
+    def get_otlp_endpoint(self) -> Optional[str]:
+        """
+        Returns the gRPC endpoint for OTLP exporters.
+
+        Accepts either 'host:port' or 'http(s)://host:port' format.
+        Returns plain 'host:port' for gRPC (no scheme needed).
+        """
+        if not self.otel_endpoint:
+            return None
+        endpoint = self.otel_endpoint.strip()
+        # Strip scheme if present — gRPC endpoint is just host:port
+        if endpoint.startswith("https://"):
+            endpoint = endpoint[len("https://") :]
+        elif endpoint.startswith("http://"):
+            endpoint = endpoint[len("http://") :]
+        return endpoint
 
 
 @dataclass
@@ -105,13 +137,6 @@ class Telemetry:
         self._request_count_per_minute = 0
         self._last_minute_requests = 0
         self._throughput_lock = threading.Lock()
-
-        # Resource usage tracking
-        self._cpu_gauge = None
-        self._memory_gauge = None
-        self._disk_gauge = None
-        self._resource_monitor_thread = None
-        self._stop_resource_monitor = False
 
         # Backend metrics tracking
         self._metrics: Dict[str, Dict] = {}
@@ -157,15 +182,12 @@ class Telemetry:
         """Configure trace provider."""
         provider = TracerProvider(resource=resource)
 
-        if self.config.otel_endpoint and OTLP_AVAILABLE:
-            # OTLP exporter
-            exporter = OTLPSpanExporter(
-                endpoint=f"http://{self.config.otel_endpoint}/v1/traces"
-            )
+        endpoint = self.config.get_otlp_endpoint()
+        if endpoint and OTLP_AVAILABLE:
+            # OTLP gRPC exporter — endpoint is host:port, insecure for dev
+            exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
             provider.add_span_processor(BatchSpanProcessor(exporter))
-            logging.info(
-                f"[OTel] Tracing: OTLP exporter -> {self.config.otel_endpoint}"
-            )
+            logging.info(f"[OTel] Tracing: OTLP gRPC exporter -> {endpoint}")
         elif self.config.enable_console:
             # Console exporter for debugging
             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
@@ -180,19 +202,16 @@ class Telemetry:
         """Configure meter provider."""
         readers = []
 
-        if self.config.otel_endpoint and OTLP_AVAILABLE:
-            # OTLP exporter
-            exporter = OTLPMetricExporter(
-                endpoint=f"http://{self.config.otel_endpoint}/v1/metrics"
-            )
+        endpoint = self.config.get_otlp_endpoint()
+        if endpoint and OTLP_AVAILABLE:
+            # OTLP gRPC exporter — endpoint is host:port, insecure for dev
+            exporter = OTLPMetricExporter(endpoint=endpoint, insecure=True)
             readers.append(
                 PeriodicExportingMetricReader(
                     exporter, export_interval_millis=self.config.metric_interval_ms
                 )
             )
-            logging.info(
-                f"[OTel] Metrics: OTLP exporter -> {self.config.otel_endpoint}"
-            )
+            logging.info(f"[OTel] Metrics: OTLP gRPC exporter -> {endpoint}")
         elif self.config.enable_console:
             # Console exporter for debugging
             readers.append(
@@ -232,64 +251,63 @@ class Telemetry:
             unit="{requests}",
         )
 
-        # Start resource monitoring
-        self._start_resource_monitor()
+        # System resource metrics using ObservableGauge callbacks (psutil)
+        if PSUTIL_AVAILABLE:
 
-    def _start_resource_monitor(self) -> None:
-        """Start background thread to collect resource metrics."""
-        if not PSUTIL_AVAILABLE:
-            logging.warning("[OTel] psutil not available, resource monitoring disabled")
-            return
+            def _cpu_callback(options):
+                yield metrics.Observation(psutil.cpu_percent(interval=None))
 
-        def monitor_resources():
-            while not self._stop_resource_monitor:
-                try:
-                    # CPU usage
-                    cpu_percent = psutil.cpu_percent(interval=1)
+            def _memory_callback(options):
+                yield metrics.Observation(psutil.virtual_memory().percent)
 
-                    # Memory usage
-                    memory = psutil.virtual_memory()
-                    memory_percent = memory.percent
-                    memory_used_mb = memory.used / (1024 * 1024)
+            def _memory_used_mb_callback(options):
+                yield metrics.Observation(psutil.virtual_memory().used / (1024 * 1024))
 
-                    # Disk usage
-                    disk = psutil.disk_usage("/")
-                    disk_percent = disk.percent
-                    disk_used_gb = disk.used / (1024 * 1024 * 1024)
+            def _disk_callback(options):
+                yield metrics.Observation(psutil.disk_usage("/").percent)
 
-                    # Calculate throughput (requests per minute)
-                    with self._throughput_lock:
-                        current_requests = self._request_count_per_minute
-                        self._resource_snapshot["throughput_rpm"] = (
-                            current_requests - self._last_minute_requests
-                        )
-                        self._last_minute_requests = current_requests
+            def _disk_used_gb_callback(options):
+                yield metrics.Observation(
+                    psutil.disk_usage("/").used / (1024 * 1024 * 1024)
+                )
 
-                    # Update snapshot
-                    self._resource_snapshot.update(
-                        {
-                            "cpu_percent": cpu_percent,
-                            "memory_percent": memory_percent,
-                            "memory_used_mb": int(memory_used_mb),
-                            "disk_percent": disk_percent,
-                            "disk_used_gb": round(disk_used_gb, 2),
-                        }
-                    )
-
-                except Exception as e:
-                    logging.debug(f"[OTel] Resource monitor error: {e}")
-
-                # Sleep for 60 seconds (1 minute for throughput calculation)
-                for _ in range(60):
-                    if self._stop_resource_monitor:
-                        break
-                    time.sleep(1)
-
-        self._resource_monitor_thread = threading.Thread(
-            target=monitor_resources, daemon=True
-        )
-        self._resource_monitor_thread.start()
-        logging.info("[OTel] Resource monitoring started")
+            self.meter.create_observable_gauge(
+                "system.cpu.percent",
+                callbacks=[_cpu_callback],
+                description="CPU usage percentage",
+                unit="%",
+            )
+            self.meter.create_observable_gauge(
+                "system.memory.percent",
+                callbacks=[_memory_callback],
+                description="Memory usage percentage",
+                unit="%",
+            )
+            self.meter.create_observable_gauge(
+                "system.memory.used_mb",
+                callbacks=[_memory_used_mb_callback],
+                description="Memory used in megabytes",
+                unit="MB",
+            )
+            self.meter.create_observable_gauge(
+                "system.disk.percent",
+                callbacks=[_disk_callback],
+                description="Disk usage percentage",
+                unit="%",
+            )
+            self.meter.create_observable_gauge(
+                "system.disk.used_gb",
+                callbacks=[_disk_used_gb_callback],
+                description="Disk used in gigabytes",
+                unit="GB",
+            )
+            logging.info(
+                "[OTel] System resource metrics (CPU/Memory/Disk) registered via ObservableGauge"
+            )
+        else:
+            logging.warning(
+                "[OTel] psutil not available, system resource metrics disabled"
+            )
 
     def _setup_logging(self, resource: Resource) -> None:
         """Configure logging with OTLP export."""
@@ -297,14 +315,12 @@ class Telemetry:
         provider = LoggerProvider(resource=resource)
 
         # Add OTLP Exporter if endpoint is configured
-        if self.config.otel_endpoint and OTLP_AVAILABLE:
-            exporter = OTLPLogExporter(
-                endpoint=f"http://{self.config.otel_endpoint}/v1/logs"
-            )
+        endpoint = self.config.get_otlp_endpoint()
+        if endpoint and OTLP_AVAILABLE:
+            # OTLP gRPC exporter — endpoint is host:port, insecure for dev
+            exporter = OTLPLogExporter(endpoint=endpoint, insecure=True)
             provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
-            logging.info(
-                f"[OTel] Logging: OTLP exporter -> {self.config.otel_endpoint}"
-            )
+            logging.info(f"[OTel] Logging: OTLP gRPC exporter -> {endpoint}")
         elif self.config.enable_console:
             provider.add_log_record_processor(
                 BatchLogRecordProcessor(ConsoleLogExporter())
@@ -426,29 +442,61 @@ class Telemetry:
             "environment": self.config.environment,
             "uptime_seconds": round(uptime_seconds, 1),
             "log_count": len(self._recent_logs),
-            "otel_endpoint": self.config.otel_endpoint or "none",
+            "otel_endpoint": self.config.get_otlp_endpoint() or "none",
             "total_requests": total_requests,
             "throughput": {
                 "requests_per_minute": round(avg_throughput, 2),
                 "current_rpm": self._resource_snapshot.get("throughput_rpm", 0),
             },
             "resources": {
-                "cpu_percent": self._resource_snapshot.get("cpu_percent", 0),
-                "memory_percent": self._resource_snapshot.get("memory_percent", 0),
-                "memory_used_mb": self._resource_snapshot.get("memory_used_mb", 0),
-                "disk_percent": self._resource_snapshot.get("disk_percent", 0),
-                "disk_used_gb": self._resource_snapshot.get("disk_used_gb", 0),
+                "cpu_percent": psutil.cpu_percent(interval=None)
+                if PSUTIL_AVAILABLE
+                else 0,
+                "memory_percent": psutil.virtual_memory().percent
+                if PSUTIL_AVAILABLE
+                else 0,
+                "memory_used_mb": int(psutil.virtual_memory().used / (1024 * 1024))
+                if PSUTIL_AVAILABLE
+                else 0,
+                "disk_percent": psutil.disk_usage("/").percent
+                if PSUTIL_AVAILABLE
+                else 0,
+                "disk_used_gb": round(
+                    psutil.disk_usage("/").used / (1024 * 1024 * 1024), 2
+                )
+                if PSUTIL_AVAILABLE
+                else 0,
             },
             "psutil_available": PSUTIL_AVAILABLE,
         }
 
     def get_resource_usage(self) -> Dict[str, Any]:
         """Get current resource usage."""
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "psutil_available": PSUTIL_AVAILABLE,
-            **self._resource_snapshot,
-        }
+        snapshot = {"timestamp": datetime.utcnow().isoformat()}
+        if PSUTIL_AVAILABLE:
+            snapshot.update(
+                {
+                    "cpu_percent": psutil.cpu_percent(interval=None),
+                    "memory_percent": psutil.virtual_memory().percent,
+                    "memory_used_mb": int(psutil.virtual_memory().used / (1024 * 1024)),
+                    "disk_percent": psutil.disk_usage("/").percent,
+                    "disk_used_gb": round(
+                        psutil.disk_usage("/").used / (1024 * 1024 * 1024), 2
+                    ),
+                }
+            )
+        else:
+            snapshot.update(
+                {
+                    "cpu_percent": 0.0,
+                    "memory_percent": 0.0,
+                    "memory_used_mb": 0,
+                    "disk_percent": 0.0,
+                    "disk_used_gb": 0,
+                }
+            )
+        snapshot["psutil_available"] = PSUTIL_AVAILABLE
+        return snapshot
 
     def get_logs_response(self, limit: int = 100) -> Dict[str, Any]:
         """Get logs for API response."""
@@ -524,7 +572,7 @@ def init_telemetry(app: FastAPI, config: Optional[TelemetryConfig] = None) -> Te
         # Load from environment or use defaults
         config = TelemetryConfig(
             service_name=os.getenv("OTEL_SERVICE_NAME", "orange3-web-backend"),
-            service_version=os.getenv("SERVICE_VERSION", "0.35.0"),
+            service_version=os.getenv("SERVICE_VERSION", _get_version()),
             environment=os.getenv("ENVIRONMENT", "development"),
             otel_endpoint=os.getenv("OTEL_ENDPOINT"),
             enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",

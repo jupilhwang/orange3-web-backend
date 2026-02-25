@@ -275,20 +275,31 @@ def _init_telemetry(fastapi_app: FastAPI) -> None:
     if not (OTEL_AVAILABLE and init_telemetry):
         return
 
-    otel_endpoint = os.getenv("OTEL_ENDPOINT")
-    otel_enabled = os.getenv("OTEL_ENABLED", "true").lower() == "true"
+    # Config file takes priority over environment variables
+    app_config = get_config()
+    otel_enabled = app_config.otel.enabled
+    otel_endpoint = app_config.otel.endpoint or os.getenv("OTEL_ENDPOINT")
+
+    logger.info(
+        f"[OTel] Config loaded — enabled={otel_enabled}, "
+        f"endpoint={repr(otel_endpoint)}, "
+        f"source={'file' if app_config.otel.endpoint else 'env/default'}"
+    )
 
     if otel_enabled:
         config = TelemetryConfig(
-            service_name="orange3-web-backend",
-            service_version=SERVER_VERSION,
-            environment=os.getenv("ENVIRONMENT", "development"),
+            service_name=app_config.otel.service_name,
+            service_version=app_config.otel.service_version,
+            environment=app_config.otel.environment,
             otel_endpoint=otel_endpoint,
-            enable_console=os.getenv("OTEL_CONSOLE", "false").lower() == "true",
-            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            enable_console=app_config.otel.enable_console,
+            log_level=app_config.log.level,
+            metric_interval_ms=app_config.otel.metric_interval_ms,
         )
         init_telemetry(fastapi_app, config)
-        logger.info(f"OpenTelemetry initialized (endpoint: {otel_endpoint or 'none'})")
+        logger.info(
+            f"OpenTelemetry initialized (endpoint: {config.get_otlp_endpoint() or 'none'})"
+        )
 
 
 async def _init_database() -> None:

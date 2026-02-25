@@ -1109,7 +1109,7 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
     return result
 
 
-class WidgetDiscovery:
+class FilesystemWidgetDiscovery:
     """Discovers Orange3 widgets from the filesystem using AST parsing.
 
     Dynamically discovers all installed Orange3 add-ons via entry_points
@@ -1577,14 +1577,16 @@ class WidgetDiscovery:
 
 
 # Singleton instance
-_discovery_instance: Optional[WidgetDiscovery] = None
+_discovery_instance: Optional[FilesystemWidgetDiscovery] = None
 
 
-def get_widget_discovery(orange3_path: Optional[str] = None) -> WidgetDiscovery:
+def get_widget_discovery(
+    orange3_path: Optional[str] = None,
+) -> FilesystemWidgetDiscovery:
     """Get or create the widget discovery instance."""
     global _discovery_instance
     if _discovery_instance is None:
-        _discovery_instance = WidgetDiscovery(orange3_path)
+        _discovery_instance = FilesystemWidgetDiscovery(orange3_path)
     return _discovery_instance
 
 
@@ -1606,7 +1608,7 @@ __all__ = [
     "WebSchemeLink",
     "WebAnnotation",
     # Widget discovery
-    "WidgetDiscovery",
+    "FilesystemWidgetDiscovery",
     "discover_widgets",
     "get_widget_discovery",
     "CATEGORY_COLORS",
