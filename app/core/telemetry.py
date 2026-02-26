@@ -59,17 +59,7 @@ from opentelemetry._logs import set_logger_provider
 
 
 # VERSION file path relative to this file: backend/app/core/telemetry.py → backend/VERSION
-_VERSION_FILE = Path(__file__).parent.parent.parent / "VERSION"
-
-
-def _get_version() -> str:
-    """Read service version from VERSION file."""
-    if _VERSION_FILE.exists():
-        try:
-            return _VERSION_FILE.read_text().strip()
-        except Exception:
-            pass
-    return "0.0.0"
+from app.core.config import _get_version
 
 
 @dataclass

@@ -10,6 +10,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
+from app.core.data_utils import resolve_data_path
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model", tags=["Model"])
@@ -54,17 +56,6 @@ class KMeansResponse(BaseModel):
 
 # In-memory storage for clustering results
 _kmeans_results = {}
-
-
-def resolve_data_path(data_path: str) -> str:
-    """Resolve data path to actual file path."""
-    if data_path.startswith("uploads/"):
-        return str(UPLOAD_DIR / data_path.replace("uploads/", ""))
-    elif data_path.startswith("datasets/"):
-        # Built-in Orange3 datasets
-        dataset_name = data_path.replace("datasets/", "").split(".")[0]
-        return dataset_name
-    return data_path
 
 
 @router.post("/kmeans/cluster")
