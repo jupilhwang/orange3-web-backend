@@ -2,9 +2,10 @@
 Data models for Orange3 Web Backend
 Based on orange-canvas-core scheme models
 """
+
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import IntEnum, Enum
 import uuid
 
@@ -13,8 +14,10 @@ import uuid
 # Enums
 # ============================================================================
 
+
 class NodeState(IntEnum):
     """Node runtime state flags (from SchemeNode.State)"""
+
     NoState = 0
     Running = 1
     Pending = 2
@@ -24,12 +27,14 @@ class NodeState(IntEnum):
 
 class LinkState(str, Enum):
     """Link state"""
+
     Active = "Active"
     Pending = "Pending"
 
 
 class MessageSeverity(IntEnum):
     """User message severity (from UserMessage)"""
+
     Info = 1
     Warning = 2
     Error = 3
@@ -37,6 +42,7 @@ class MessageSeverity(IntEnum):
 
 class ContentType(str, Enum):
     """Annotation content type"""
+
     TextPlain = "text/plain"
     TextHtml = "text/html"
     TextRst = "text/rst"
@@ -46,14 +52,17 @@ class ContentType(str, Enum):
 # Position & Geometry
 # ============================================================================
 
+
 class Position(BaseModel):
     """Position of an element on the canvas."""
+
     x: float
     y: float
 
 
 class Rect(BaseModel):
     """Rectangle geometry."""
+
     x: float
     y: float
     width: float
@@ -64,8 +73,10 @@ class Rect(BaseModel):
 # Channels (Inputs/Outputs)
 # ============================================================================
 
+
 class InputChannel(BaseModel):
     """Input channel definition (from InputSignal)."""
+
     id: str
     name: str
     types: List[str] = []  # Fully qualified type names
@@ -75,6 +86,7 @@ class InputChannel(BaseModel):
 
 class OutputChannel(BaseModel):
     """Output channel definition (from OutputSignal)."""
+
     id: str
     name: str
     types: List[str] = []  # Fully qualified type names
@@ -86,8 +98,10 @@ class OutputChannel(BaseModel):
 # Widget Registry
 # ============================================================================
 
+
 class WidgetDescription(BaseModel):
     """Widget type description (from WidgetDescription)."""
+
     id: str
     name: str
     description: str = ""
@@ -103,6 +117,7 @@ class WidgetDescription(BaseModel):
 
 class WidgetCategory(BaseModel):
     """Widget category."""
+
     name: str
     description: str = ""
     color: str = "#808080"
@@ -114,8 +129,10 @@ class WidgetCategory(BaseModel):
 # Node
 # ============================================================================
 
+
 class UserMessage(BaseModel):
     """A user message displayed on a node (from UserMessage)."""
+
     content: str
     severity: MessageSeverity = MessageSeverity.Info
     message_id: str = ""
@@ -124,6 +141,7 @@ class UserMessage(BaseModel):
 
 class WorkflowNode(BaseModel):
     """A node in the workflow (from SchemeNode)."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     widget_id: str  # Reference to WidgetDescription.id
     title: str
@@ -132,17 +150,16 @@ class WorkflowNode(BaseModel):
     state: NodeState = NodeState.NoState
     progress: float = -1.0  # -1 = no progress, 0-100 = progress
     messages: List[UserMessage] = []
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class NodeCreate(BaseModel):
     """Schema for creating a node."""
+
     widget_id: str
     title: str
     position: Position
@@ -151,6 +168,7 @@ class NodeCreate(BaseModel):
 
 class NodeUpdate(BaseModel):
     """Schema for updating a node."""
+
     title: Optional[str] = None
     position: Optional[Position] = None
     properties: Optional[Dict[str, Any]] = None
@@ -162,8 +180,10 @@ class NodeUpdate(BaseModel):
 # Link
 # ============================================================================
 
+
 class WorkflowLink(BaseModel):
     """A link between two nodes (from SchemeLink)."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_node_id: str
     source_channel: str  # Output channel name
@@ -171,16 +191,15 @@ class WorkflowLink(BaseModel):
     sink_channel: str  # Input channel name
     enabled: bool = True
     state: LinkState = LinkState.Active
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class LinkCreate(BaseModel):
     """Schema for creating a link."""
+
     source_node_id: str
     source_channel: str
     sink_node_id: str
@@ -189,11 +208,13 @@ class LinkCreate(BaseModel):
 
 class LinkUpdate(BaseModel):
     """Schema for updating a link."""
+
     enabled: Optional[bool] = None
 
 
 class LinkValidation(BaseModel):
     """Schema for validating link compatibility."""
+
     source_node_id: str
     source_channel: str
     sink_node_id: str
@@ -202,6 +223,7 @@ class LinkValidation(BaseModel):
 
 class LinkCompatibility(BaseModel):
     """Result of link compatibility check."""
+
     compatible: bool
     strict: bool = False  # Strict type match
     dynamic: bool = False  # Dynamic type match
@@ -212,8 +234,10 @@ class LinkCompatibility(BaseModel):
 # Annotations
 # ============================================================================
 
+
 class TextAnnotation(BaseModel):
     """Text annotation (from SchemeTextAnnotation)."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: str = "text"
     rect: Rect
@@ -224,6 +248,7 @@ class TextAnnotation(BaseModel):
 
 class ArrowAnnotation(BaseModel):
     """Arrow annotation (from SchemeArrowAnnotation)."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: str = "arrow"
     start_pos: Position
@@ -236,6 +261,7 @@ Annotation = Union[TextAnnotation, ArrowAnnotation]
 
 class AnnotationCreate(BaseModel):
     """Schema for creating an annotation."""
+
     type: str  # "text" or "arrow"
     # For text
     rect: Optional[Rect] = None
@@ -250,6 +276,7 @@ class AnnotationCreate(BaseModel):
 
 class AnnotationUpdate(BaseModel):
     """Schema for updating an annotation."""
+
     # For text
     rect: Optional[Rect] = None
     content: Optional[str] = None
@@ -265,8 +292,10 @@ class AnnotationUpdate(BaseModel):
 # Workflow
 # ============================================================================
 
+
 class WorkflowSummary(BaseModel):
     """Summary of a workflow for listing."""
+
     id: str
     tenant_id: str
     title: str
@@ -275,15 +304,14 @@ class WorkflowSummary(BaseModel):
     link_count: int = 0
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class Workflow(BaseModel):
     """A complete workflow (from Scheme)."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     tenant_id: str
     title: str = "Untitled"
@@ -293,9 +321,9 @@ class Workflow(BaseModel):
     links: List[WorkflowLink] = []
     annotations: List[Union[TextAnnotation, ArrowAnnotation]] = []
     loop_flags: int = 0  # NoLoops, AllowLoops, AllowSelfLoops
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     def to_summary(self) -> WorkflowSummary:
         return WorkflowSummary(
             id=self.id,
@@ -305,23 +333,23 @@ class Workflow(BaseModel):
             node_count=len(self.nodes),
             link_count=len(self.links),
             created_at=self.created_at,
-            updated_at=self.updated_at
+            updated_at=self.updated_at,
         )
-    
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class WorkflowCreate(BaseModel):
     """Schema for creating a workflow."""
+
     title: str = "Untitled"
     description: str = ""
 
 
 class WorkflowUpdate(BaseModel):
     """Schema for updating a workflow."""
+
     title: Optional[str] = None
     description: Optional[str] = None
     env: Optional[Dict[str, Any]] = None
@@ -331,8 +359,10 @@ class WorkflowUpdate(BaseModel):
 # Execution
 # ============================================================================
 
+
 class ExecutionMode(str, Enum):
     """Workflow execution mode."""
+
     Full = "full"  # Execute entire workflow
     Partial = "partial"  # Execute from a specific node
     Node = "node"  # Execute single node
@@ -340,12 +370,14 @@ class ExecutionMode(str, Enum):
 
 class ExecutionRequest(BaseModel):
     """Request to execute a workflow."""
+
     mode: ExecutionMode = ExecutionMode.Full
     target_node_id: Optional[str] = None  # For partial/node execution
 
 
 class ExecutionStatus(BaseModel):
     """Workflow execution status."""
+
     workflow_id: str
     running: bool
     current_node_id: Optional[str] = None
@@ -357,24 +389,26 @@ class ExecutionStatus(BaseModel):
 # Tenant (Multi-tenancy)
 # ============================================================================
 
+
 class Tenant(BaseModel):
     """A tenant in the multi-tenant system."""
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
     class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 # ============================================================================
 # WebSocket Events
 # ============================================================================
 
+
 class WSEventType(str, Enum):
     """WebSocket event types."""
+
     # Server -> Client
     NodeStateChanged = "node_state_changed"
     NodeProgressChanged = "node_progress_changed"
@@ -395,5 +429,6 @@ class WSEventType(str, Enum):
 
 class WSEvent(BaseModel):
     """WebSocket event."""
+
     type: WSEventType
     data: Dict[str, Any] = {}

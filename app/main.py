@@ -23,6 +23,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+import asyncio
 import ipaddress
 import os
 import logging
@@ -60,7 +61,7 @@ def get_server_version() -> str:
 SERVER_VERSION = get_server_version()
 
 
-def validate_url_for_ssrf(url: str) -> tuple[bool, str]:
+async def validate_url_for_ssrf(url: str) -> tuple[bool, str]:
     """
     Validate URL to prevent SSRF attacks.
 
@@ -100,11 +101,13 @@ def validate_url_for_ssrf(url: str) -> tuple[bool, str]:
                     f"Private/internal IP addresses not allowed: {parsed.hostname}",
                 )
         except ValueError:
-            # Not an IP, it's a hostname - resolve and check
+            # Not an IP, it's a hostname - resolve and check without blocking the event loop
             import socket
 
             try:
-                resolved_ip = socket.gethostbyname(parsed.hostname)
+                resolved_ip = await asyncio.to_thread(
+                    socket.gethostbyname, parsed.hostname
+                )
                 ip = ipaddress.ip_address(resolved_ip)
                 if ip.is_private or ip.is_loopback or ip.is_link_local:
                     return False, f"Hostname resolves to private IP: {resolved_ip}"
@@ -171,6 +174,9 @@ from .core import TenantManager, get_current_tenant
 from .websocket_manager import TaskWebSocketManager, task_ws_manager
 from .workflow_manager import WorkflowManager
 
+# Module-level WorkflowManager instance (initialized during startup)
+_global_workflow_manager: Optional[WorkflowManager] = None
+
 # OpenTelemetry
 try:
     from .core.telemetry import init_telemetry, get_telemetry, TelemetryConfig
@@ -222,6 +228,7 @@ from .routes import (
     set_registry_getter,
     set_registry_getter as set_widget_registry_getter,
     set_websocket_manager,
+    set_workflow_manager,
 )
 
 # mDNS Service Discovery
@@ -334,7 +341,8 @@ def _init_registry() -> None:
 
     # Initialize WorkflowManager with the registry so link type-compatibility
     # checks use discovered widget channel types.
-    workflow_manager = WorkflowManager(registry=registry)
+    global _global_workflow_manager
+    _global_workflow_manager = WorkflowManager(registry=registry)
     logger.info(
         "WorkflowManager initialized"
         + (
@@ -408,9 +416,7 @@ async def _init_mdns(app_config) -> Optional[Any]:
 
     service_type = mdns_config.service_type
     if not service_type.endswith(".local."):
-        service_type = service_type + (
-            "local." if service_type.endswith(".") else ".local."
-        )
+        service_type = service_type.rstrip(".") + ".local."
 
     mdns_svc_config = MDNSServiceConfig(
         enabled=mdns_config.enabled,
@@ -458,6 +464,7 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     _init_registry()
 
     set_websocket_manager(task_ws_manager)
+    set_workflow_manager(_global_workflow_manager)
     logger.info("Async locks enabled for concurrent access protection")
 
     task_worker_enabled = await _init_task_worker()
@@ -608,8 +615,6 @@ api_v1 = APIRouter(prefix="/api/v1")
 @app.get("/health")
 async def health_check() -> dict:
     """Health check endpoint."""
-    import time
-
     availability = get_availability()
     config = get_config()
     storage_type = (
@@ -872,7 +877,7 @@ async def _resolve_file_path(
     return actual_path, temp_file, metadata
 
 
-def _apply_metadata_overrides(
+async def _apply_metadata_overrides(
     columns: list, path: str, tenant_id: Optional[str]
 ) -> list:
     """Read .metadata.json sidecar for the given path and apply column type/role overrides."""
@@ -891,8 +896,12 @@ def _apply_metadata_overrides(
         return columns
 
     try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata_overrides = json.load(f)
+
+        def _read_metadata():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+        metadata_overrides = await asyncio.to_thread(_read_metadata)
 
         meta_cols = {col["name"]: col for col in metadata_overrides.get("columns", [])}
 
@@ -1008,10 +1017,10 @@ async def load_data_from_path(
     try:
         from Orange.data import Table
 
-        data = Table(actual_path)
+        data = await asyncio.to_thread(Table, actual_path)
 
         columns = _extract_domain_columns(data.domain)
-        columns = _apply_metadata_overrides(columns, path, x_tenant_id)
+        columns = await _apply_metadata_overrides(columns, path, x_tenant_id)
 
         # Build display name
         if path.startswith("file:") and metadata:
@@ -1072,7 +1081,7 @@ async def load_data_from_url(request: UrlLoadRequest) -> dict:
 
     # Validate URL for SSRF
     url = request.url
-    is_valid, error_msg = validate_url_for_ssrf(url)
+    is_valid, error_msg = await validate_url_for_ssrf(url)
     if not is_valid:
         logger.warning(f"SSRF attempt blocked: {url} - {error_msg}")
         raise HTTPException(status_code=403, detail=f"URL not allowed: {error_msg}")
@@ -1080,18 +1089,24 @@ async def load_data_from_url(request: UrlLoadRequest) -> dict:
     try:
         from Orange.data import Table
         import tempfile
-        import urllib.request
+        import httpx
         import os
 
-        # Download to temp file
+        # Download to temp file using async streaming to avoid blocking the event loop
         logger.info(f"Downloading from validated URL: {url}")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            urllib.request.urlretrieve(url, tmp.name)
             tmp_path = tmp.name
 
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with open(tmp_path, "wb") as f:
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
+
         try:
-            # Try to load the data
-            data = Table(tmp_path)
+            # Load the data without blocking the event loop
+            data = await asyncio.to_thread(Table, tmp_path)
 
             # Get column info
             columns = _extract_domain_columns(data.domain)

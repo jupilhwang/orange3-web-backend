@@ -1,14 +1,26 @@
 """
 Workflow management for Orange3 Web Backend
 Based on orange-canvas-core scheme management
+
+Concurrency notes:
+    All public methods are synchronous and not thread-safe by themselves.
+    Callers (e.g. HTTP route handlers) MUST hold the appropriate
+    ``lock_workflow`` / ``lock_tenant`` context from ``core.locks`` before
+    invoking any mutating method.  The internal ``_node_index``,
+    ``_link_index``, and ``_annotation_index`` dicts are kept in sync with
+    ``workflow.nodes / .links / .annotations`` lists, so the lists remain
+    the authoritative serialisable representation while the dicts provide
+    O(1) lookup.
 """
 
-from typing import Dict, List, Optional, Union
-from datetime import datetime
+import logging
 import uuid
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Union
 
 from .core.models import (
+    ContentType,
     Workflow,
     WorkflowNode,
     WorkflowLink,
@@ -29,21 +41,71 @@ from .core.models import (
     NodeState,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class WorkflowManager:
-    """Manages workflows in memory (can be extended to use database)."""
+    """Manages workflows in memory (can be extended to use database).
 
-    def __init__(self, registry=None) -> None:
+    Index maintenance guarantee
+    ---------------------------
+    Every mutating operation that touches ``workflow.nodes``,
+    ``workflow.links``, or ``workflow.annotations`` also updates the
+    corresponding per-workflow lookup dict so that:
+
+    * ``_node_index[wf_id][node_id]``  → O(1) node access
+    * ``_link_index[wf_id][link_id]``  → O(1) link access
+    * ``_annotation_index[wf_id][ann_id]`` → O(1) annotation access
+    """
+
+    def __init__(self, registry: Optional["OrangeRegistryAdapter"] = None) -> None:  # noqa: F821
         # In-memory storage: tenant_id -> workflow_id -> Workflow
         self._workflows: Dict[str, Dict[str, Workflow]] = {}
-        # Optional OrangeRegistryAdapter for type compatibility checking
+
+        # Per-workflow O(1) lookup indexes:  workflow_id -> {item_id -> item}
+        self._node_index: Dict[str, Dict[str, WorkflowNode]] = {}
+        self._link_index: Dict[str, Dict[str, WorkflowLink]] = {}
+        self._annotation_index: Dict[
+            str, Dict[str, Union[TextAnnotation, ArrowAnnotation]]
+        ] = {}
+
+        # Optional OrangeRegistryAdapter for type-compatibility checking
         self._registry = registry
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _get_tenant_workflows(self, tenant_id: str) -> Dict[str, Workflow]:
         """Get or create the workflow dict for a tenant."""
         if tenant_id not in self._workflows:
             self._workflows[tenant_id] = {}
         return self._workflows[tenant_id]
+
+    def _ensure_indexes(self, workflow_id: str) -> None:
+        """Create empty index dicts for a workflow if they don't exist yet."""
+        if workflow_id not in self._node_index:
+            self._node_index[workflow_id] = {}
+        if workflow_id not in self._link_index:
+            self._link_index[workflow_id] = {}
+        if workflow_id not in self._annotation_index:
+            self._annotation_index[workflow_id] = {}
+
+    def _drop_indexes(self, workflow_id: str) -> None:
+        """Remove all index entries for a deleted workflow."""
+        self._node_index.pop(workflow_id, None)
+        self._link_index.pop(workflow_id, None)
+        self._annotation_index.pop(workflow_id, None)
+
+    def _rebuild_indexes(self, workflow: Workflow) -> None:
+        """Rebuild all indexes for *workflow* from its current lists.
+
+        Used after bulk list replacement (e.g. during OWS import).
+        """
+        wf_id = workflow.id
+        self._node_index[wf_id] = {n.id: n for n in workflow.nodes}
+        self._link_index[wf_id] = {lk.id: lk for lk in workflow.links}
+        self._annotation_index[wf_id] = {a.id: a for a in workflow.annotations}
 
     # ========================================================================
     # Workflow CRUD
@@ -59,6 +121,7 @@ class WorkflowManager:
             tenant_id=tenant_id, title=data.title, description=data.description
         )
         self._get_tenant_workflows(tenant_id)[workflow.id] = workflow
+        self._ensure_indexes(workflow.id)
         return workflow
 
     def get_workflow(self, tenant_id: str, workflow_id: str) -> Optional[Workflow]:
@@ -79,15 +142,16 @@ class WorkflowManager:
             workflow.description = data.description
         if data.env is not None:
             workflow.env = data.env
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
 
         return workflow
 
     def delete_workflow(self, tenant_id: str, workflow_id: str) -> bool:
-        """Delete a workflow."""
+        """Delete a workflow and clean up all associated index entries."""
         workflows = self._get_tenant_workflows(tenant_id)
         if workflow_id in workflows:
             del workflows[workflow_id]
+            self._drop_indexes(workflow_id)
             return True
         return False
 
@@ -110,22 +174,20 @@ class WorkflowManager:
             properties=data.properties,
         )
         workflow.nodes.append(node)
-        workflow.updated_at = datetime.utcnow()
+        self._ensure_indexes(workflow_id)
+        self._node_index[workflow_id][node.id] = node
+        workflow.updated_at = datetime.now(timezone.utc)
 
         return node
 
     def get_node(
         self, tenant_id: str, workflow_id: str, node_id: str
     ) -> Optional[WorkflowNode]:
-        """Get a node by ID."""
+        """Get a node by ID (O(1) dict lookup)."""
         workflow = self.get_workflow(tenant_id, workflow_id)
         if not workflow:
             return None
-
-        for node in workflow.nodes:
-            if node.id == node_id:
-                return node
-        return None
+        return self._node_index.get(workflow_id, {}).get(node_id)
 
     def update_node(
         self, tenant_id: str, workflow_id: str, node_id: str, data: NodeUpdate
@@ -145,12 +207,11 @@ class WorkflowManager:
             node.state = data.state
         if data.progress is not None:
             node.progress = data.progress
-        node.updated_at = datetime.utcnow()
+        node.updated_at = datetime.now(timezone.utc)
 
-        # Update workflow timestamp
         workflow = self.get_workflow(tenant_id, workflow_id)
         if workflow:
-            workflow.updated_at = datetime.utcnow()
+            workflow.updated_at = datetime.now(timezone.utc)
 
         return node
 
@@ -160,25 +221,30 @@ class WorkflowManager:
         if not workflow:
             return False
 
-        # Find and remove the node
-        node_found = False
-        for i, node in enumerate(workflow.nodes):
-            if node.id == node_id:
-                workflow.nodes.pop(i)
-                node_found = True
-                break
-
-        if not node_found:
+        node_index = self._node_index.get(workflow_id, {})
+        if node_id not in node_index:
             return False
 
-        # Remove connected links
+        # Remove from list and index
+        del node_index[node_id]
+        workflow.nodes = [n for n in workflow.nodes if n.id != node_id]
+
+        # Remove connected links from both list and index
+        link_index = self._link_index.get(workflow_id, {})
+        dead_link_ids = [
+            lk_id
+            for lk_id, lk in link_index.items()
+            if lk.source_node_id == node_id or lk.sink_node_id == node_id
+        ]
+        for lk_id in dead_link_ids:
+            del link_index[lk_id]
         workflow.links = [
-            link
-            for link in workflow.links
-            if link.source_node_id != node_id and link.sink_node_id != node_id
+            lk
+            for lk in workflow.links
+            if lk.source_node_id != node_id and lk.sink_node_id != node_id
         ]
 
-        workflow.updated_at = datetime.utcnow()
+        workflow.updated_at = datetime.now(timezone.utc)
         return True
 
     # ========================================================================
@@ -193,14 +259,13 @@ class WorkflowManager:
         if not workflow:
             return None
 
-        # Verify source and sink nodes exist
-        source_exists = any(n.id == data.source_node_id for n in workflow.nodes)
-        sink_exists = any(n.id == data.sink_node_id for n in workflow.nodes)
-
-        if not source_exists or not sink_exists:
+        # O(1) node existence check via index
+        node_index = self._node_index.get(workflow_id, {})
+        if data.source_node_id not in node_index or data.sink_node_id not in node_index:
             return None
 
-        # Check for duplicate links
+        # Check for duplicate links (still O(n) over links — unavoidable without
+        # a composite-key set, but links are typically few per workflow)
         for link in workflow.links:
             if (
                 link.source_node_id == data.source_node_id
@@ -217,22 +282,20 @@ class WorkflowManager:
             sink_channel=data.sink_channel,
         )
         workflow.links.append(link)
-        workflow.updated_at = datetime.utcnow()
+        self._ensure_indexes(workflow_id)
+        self._link_index[workflow_id][link.id] = link
+        workflow.updated_at = datetime.now(timezone.utc)
 
         return link
 
     def get_link(
         self, tenant_id: str, workflow_id: str, link_id: str
     ) -> Optional[WorkflowLink]:
-        """Get a link by ID."""
+        """Get a link by ID (O(1) dict lookup)."""
         workflow = self.get_workflow(tenant_id, workflow_id)
         if not workflow:
             return None
-
-        for link in workflow.links:
-            if link.id == link_id:
-                return link
-        return None
+        return self._link_index.get(workflow_id, {}).get(link_id)
 
     def update_link(
         self, tenant_id: str, workflow_id: str, link_id: str, data: LinkUpdate
@@ -245,10 +308,9 @@ class WorkflowManager:
         if data.enabled is not None:
             link.enabled = data.enabled
 
-        # Update workflow timestamp
         workflow = self.get_workflow(tenant_id, workflow_id)
         if workflow:
-            workflow.updated_at = datetime.utcnow()
+            workflow.updated_at = datetime.now(timezone.utc)
 
         return link
 
@@ -258,13 +320,14 @@ class WorkflowManager:
         if not workflow:
             return False
 
-        for i, link in enumerate(workflow.links):
-            if link.id == link_id:
-                workflow.links.pop(i)
-                workflow.updated_at = datetime.utcnow()
-                return True
+        link_index = self._link_index.get(workflow_id, {})
+        if link_id not in link_index:
+            return False
 
-        return False
+        del link_index[link_id]
+        workflow.links = [lk for lk in workflow.links if lk.id != link_id]
+        workflow.updated_at = datetime.now(timezone.utc)
+        return True
 
     def validate_link(
         self, tenant_id: str, workflow_id: str, validation: LinkValidation
@@ -274,21 +337,17 @@ class WorkflowManager:
         if not workflow:
             return LinkCompatibility(compatible=False, reason="Workflow not found")
 
-        # Check if nodes exist
-        source_node = None
-        sink_node = None
-        for node in workflow.nodes:
-            if node.id == validation.source_node_id:
-                source_node = node
-            if node.id == validation.sink_node_id:
-                sink_node = node
+        # O(1) node lookup via index
+        node_index = self._node_index.get(workflow_id, {})
+        source_node = node_index.get(validation.source_node_id)
+        sink_node = node_index.get(validation.sink_node_id)
 
         if not source_node:
             return LinkCompatibility(compatible=False, reason="Source node not found")
         if not sink_node:
             return LinkCompatibility(compatible=False, reason="Sink node not found")
 
-        # Check for cycles (simplified - just prevent self-loops)
+        # Prevent self-loops
         if validation.source_node_id == validation.sink_node_id:
             return LinkCompatibility(compatible=False, reason="Self-loops not allowed")
 
@@ -367,10 +426,12 @@ class WorkflowManager:
         if data.type == "text":
             if not data.rect:
                 return None
-            annotation = TextAnnotation(
+            annotation: Union[TextAnnotation, ArrowAnnotation] = TextAnnotation(
                 rect=data.rect,
                 content=data.content or "",
-                content_type=data.content_type or "text/plain",
+                content_type=data.content_type
+                if data.content_type is not None
+                else ContentType.TextPlain,
                 font=data.font or {},
             )
         elif data.type == "arrow":
@@ -385,22 +446,20 @@ class WorkflowManager:
             return None
 
         workflow.annotations.append(annotation)
-        workflow.updated_at = datetime.utcnow()
+        self._ensure_indexes(workflow_id)
+        self._annotation_index[workflow_id][annotation.id] = annotation
+        workflow.updated_at = datetime.now(timezone.utc)
 
         return annotation
 
     def get_annotation(
         self, tenant_id: str, workflow_id: str, annotation_id: str
     ) -> Optional[Union[TextAnnotation, ArrowAnnotation]]:
-        """Get an annotation by ID."""
+        """Get an annotation by ID (O(1) dict lookup)."""
         workflow = self.get_workflow(tenant_id, workflow_id)
         if not workflow:
             return None
-
-        for annotation in workflow.annotations:
-            if annotation.id == annotation_id:
-                return annotation
-        return None
+        return self._annotation_index.get(workflow_id, {}).get(annotation_id)
 
     def update_annotation(
         self,
@@ -431,10 +490,9 @@ class WorkflowManager:
             if data.color is not None:
                 annotation.color = data.color
 
-        # Update workflow timestamp
         workflow = self.get_workflow(tenant_id, workflow_id)
         if workflow:
-            workflow.updated_at = datetime.utcnow()
+            workflow.updated_at = datetime.now(timezone.utc)
 
         return annotation
 
@@ -446,13 +504,16 @@ class WorkflowManager:
         if not workflow:
             return False
 
-        for i, annotation in enumerate(workflow.annotations):
-            if annotation.id == annotation_id:
-                workflow.annotations.pop(i)
-                workflow.updated_at = datetime.utcnow()
-                return True
+        ann_index = self._annotation_index.get(workflow_id, {})
+        if annotation_id not in ann_index:
+            return False
 
-        return False
+        del ann_index[annotation_id]
+        workflow.annotations = [
+            a for a in workflow.annotations if a.id != annotation_id
+        ]
+        workflow.updated_at = datetime.now(timezone.utc)
+        return True
 
     # ========================================================================
     # Import/Export (.ows format)
@@ -534,7 +595,6 @@ class WorkflowManager:
 
             workflow = self.get_workflow(tenant_id, workflow_id)
             if not workflow:
-                # Create new workflow
                 workflow = Workflow(
                     id=workflow_id,
                     tenant_id=tenant_id,
@@ -543,7 +603,7 @@ class WorkflowManager:
                 )
                 self._get_tenant_workflows(tenant_id)[workflow.id] = workflow
 
-            # Clear existing content
+            # Clear existing content (lists and indexes rebuilt below)
             workflow.nodes = []
             workflow.links = []
             workflow.annotations = []
@@ -553,15 +613,17 @@ class WorkflowManager:
             if nodes_el is not None:
                 for node_el in nodes_el.findall("node"):
                     pos_str = node_el.get("position", "(0, 0)")
-                    # Parse "(x, y)" format
-                    pos_str = pos_str.strip("()")
-                    parts = [float(p.strip()) for p in pos_str.split(",")]
+                    parts = [float(p.strip()) for p in pos_str.strip("()").split(",")]
+                    if len(parts) >= 2:
+                        x, y = parts[0], parts[1]
+                    else:
+                        x, y = 0.0, 0.0
 
                     node = WorkflowNode(
                         id=node_el.get("id", str(uuid.uuid4())),
                         widget_id=node_el.get("qualified_name", ""),
                         title=node_el.get("name", ""),
-                        position=Position(x=parts[0], y=parts[1]),
+                        position=Position(x=x, y=y),
                     )
                     workflow.nodes.append(node)
 
@@ -584,14 +646,15 @@ class WorkflowManager:
             if annotations_el is not None:
                 for text_el in annotations_el.findall("text"):
                     rect_str = text_el.get("rect", "(0, 0, 100, 50)")
-                    rect_str = rect_str.strip("()")
-                    parts = [float(p.strip()) for p in rect_str.split(",")]
+                    parts = [float(p.strip()) for p in rect_str.strip("()").split(",")]
+                    if len(parts) >= 4:
+                        rx, ry, rw, rh = parts[0], parts[1], parts[2], parts[3]
+                    else:
+                        rx, ry, rw, rh = 0.0, 0.0, 100.0, 50.0
 
-                    annotation = TextAnnotation(
+                    annotation: Union[TextAnnotation, ArrowAnnotation] = TextAnnotation(
                         id=text_el.get("id", str(uuid.uuid4())),
-                        rect=Rect(
-                            x=parts[0], y=parts[1], width=parts[2], height=parts[3]
-                        ),
+                        rect=Rect(x=rx, y=ry, width=rw, height=rh),
                         content=text_el.text or "",
                     )
                     workflow.annotations.append(annotation)
@@ -600,23 +663,32 @@ class WorkflowManager:
                     start_str = arrow_el.get("start", "(0, 0)")
                     end_str = arrow_el.get("end", "(100, 100)")
 
-                    start_str = start_str.strip("()")
-                    start_parts = [float(p.strip()) for p in start_str.split(",")]
+                    start_parts = [
+                        float(p.strip()) for p in start_str.strip("()").split(",")
+                    ]
+                    end_parts = [
+                        float(p.strip()) for p in end_str.strip("()").split(",")
+                    ]
 
-                    end_str = end_str.strip("()")
-                    end_parts = [float(p.strip()) for p in end_str.split(",")]
+                    sx = start_parts[0] if len(start_parts) >= 1 else 0.0
+                    sy = start_parts[1] if len(start_parts) >= 2 else 0.0
+                    ex = end_parts[0] if len(end_parts) >= 1 else 100.0
+                    ey = end_parts[1] if len(end_parts) >= 2 else 100.0
 
                     annotation = ArrowAnnotation(
                         id=arrow_el.get("id", str(uuid.uuid4())),
-                        start_pos=Position(x=start_parts[0], y=start_parts[1]),
-                        end_pos=Position(x=end_parts[0], y=end_parts[1]),
+                        start_pos=Position(x=sx, y=sy),
+                        end_pos=Position(x=ex, y=ey),
                         color=arrow_el.get("color", "#808080"),
                     )
                     workflow.annotations.append(annotation)
 
-            workflow.updated_at = datetime.utcnow()
+            # Rebuild indexes from the freshly-populated lists
+            self._rebuild_indexes(workflow)
+
+            workflow.updated_at = datetime.now(timezone.utc)
             return workflow
 
         except Exception as e:
-            print(f"Error importing OWS: {e}")
+            logger.error("Error importing OWS: %s", e, exc_info=True)
             return None

@@ -10,12 +10,24 @@ so we only need to install Orange3.
 
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
-import json
+import ast
 import base64
 import importlib.metadata
+import json
 import logging
+import os
+import re
+import site
+import sys
+import uuid
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Module-level constant shared by OrangeRegistryAdapter and FilesystemWidgetDiscovery
+WIDGET_NAME_OVERRIDES: Dict[str, str] = {
+    "Column Statistics": "Feature Statistics",
+}
 
 # =============================================================================
 # Orange3 Imports (includes canvas-core and widget-base as dependencies)
@@ -76,10 +88,10 @@ class WebSchemeNode:
     progress: float = -1
 
     @classmethod
-    def from_scheme_node(cls, node: "SchemeNode") -> "WebSchemeNode":
-        """Create from existing SchemeNode."""
+    def from_scheme_node(cls, node: "SchemeNode", node_id: str) -> "WebSchemeNode":
+        """Create from existing SchemeNode using a caller-supplied stable ID."""
         return cls(
-            id=str(id(node)),
+            id=node_id,
             widget_id=node.description.qualified_name if node.description else "",
             title=node.title,
             position=node.position or (0, 0),
@@ -112,10 +124,15 @@ class WebSchemeLink:
     enabled: bool = True
 
     @classmethod
-    def from_scheme_link(cls, link: "SchemeLink", node_id_map: Dict) -> "WebSchemeLink":
-        """Create from existing SchemeLink."""
+    def from_scheme_link(
+        cls, link: "SchemeLink", link_id: str, node_id_map: Dict
+    ) -> "WebSchemeLink":
+        """Create from existing SchemeLink using a caller-supplied stable ID.
+
+        node_id_map maps Python object id (int) to stable UUID string.
+        """
         return cls(
-            id=str(id(link)),
+            id=link_id,
             source_node_id=node_id_map.get(id(link.source_node), ""),
             source_channel=link.source_channel.name if link.source_channel else "",
             sink_node_id=node_id_map.get(id(link.sink_node), ""),
@@ -150,11 +167,12 @@ class WebAnnotation:
 
     @classmethod
     def from_scheme_annotation(
-        cls, annotation: "BaseSchemeAnnotation"
+        cls, annotation: "BaseSchemeAnnotation", annotation_id: str
     ) -> "WebAnnotation":
+        """Create from existing annotation using a caller-supplied stable ID."""
         if isinstance(annotation, SchemeTextAnnotation):
             return cls(
-                id=str(id(annotation)),
+                id=annotation_id,
                 type="text",
                 rect=annotation.rect,
                 content=annotation.content,
@@ -163,13 +181,13 @@ class WebAnnotation:
             )
         elif isinstance(annotation, SchemeArrowAnnotation):
             return cls(
-                id=str(id(annotation)),
+                id=annotation_id,
                 type="arrow",
                 start_pos=annotation.start_pos,
                 end_pos=annotation.end_pos,
                 color=annotation.color,
             )
-        return cls(id=str(id(annotation)), type="unknown")
+        return cls(id=annotation_id, type="unknown")
 
     def to_dict(self) -> Dict:
         if self.type == "text":
@@ -424,8 +442,8 @@ class OrangeRegistryAdapter:
                                     widget_dict
                                 )
                                 widget_count += 1
-                except Exception:
-                    pass  # Skip problematic modules
+                except Exception as e:
+                    logger.debug(f"Skipped {modname}: {e}")  # Skip problematic modules
         return widget_count
 
     def _class_to_widget_dict(
@@ -502,10 +520,8 @@ class OrangeRegistryAdapter:
             {"name": "Unsupervised", "background": "#8E7CC3", "priority": 5},
         ]
 
-    # 위젯 이름 매핑 (Orange3 원래 이름 -> 표시 이름)
-    WIDGET_NAME_OVERRIDES = {
-        "Column Statistics": "Feature Statistics",
-    }
+    # 위젯 이름 매핑 (Orange3 원래 이름 -> 표시 이름) — module-level constant
+    WIDGET_NAME_OVERRIDES = WIDGET_NAME_OVERRIDES
 
     def _widget_to_dict(self, widget: "WidgetDescription") -> Dict:
         """Convert WidgetDescription to dict."""
@@ -604,26 +620,42 @@ class OrangeSchemeAdapter:
 
     def get_workflow_dict(self) -> Dict:
         """Convert scheme to web-friendly dictionary."""
-        node_id_map = {}
+        # Build reverse lookup: Python object id -> stable UUID
+        # Reuse any UUID already registered for this object; assign a new one otherwise.
+        node_id_map: Dict[int, str] = {}
         nodes = []
         for node in self._scheme.nodes:
-            web_id = str(id(node))
+            existing_id = next(
+                (k for k, v in self._node_map.items() if v is node), None
+            )
+            web_id = existing_id if existing_id is not None else str(uuid.uuid4())
+            if web_id not in self._node_map:
+                self._node_map[web_id] = node
             node_id_map[id(node)] = web_id
-            self._node_map[web_id] = node
-            nodes.append(WebSchemeNode.from_scheme_node(node).to_dict())
+            nodes.append(WebSchemeNode.from_scheme_node(node, web_id).to_dict())
 
         links = []
         for link in self._scheme.links:
-            web_id = str(id(link))
-            self._link_map[web_id] = link
-            links.append(WebSchemeLink.from_scheme_link(link, node_id_map).to_dict())
+            existing_id = next(
+                (k for k, v in self._link_map.items() if v is link), None
+            )
+            web_id = existing_id if existing_id is not None else str(uuid.uuid4())
+            if web_id not in self._link_map:
+                self._link_map[web_id] = link
+            links.append(
+                WebSchemeLink.from_scheme_link(link, web_id, node_id_map).to_dict()
+            )
 
         annotations = []
         for annotation in self._scheme.annotations:
-            web_id = str(id(annotation))
-            self._annotation_map[web_id] = annotation
+            existing_id = next(
+                (k for k, v in self._annotation_map.items() if v is annotation), None
+            )
+            web_id = existing_id if existing_id is not None else str(uuid.uuid4())
+            if web_id not in self._annotation_map:
+                self._annotation_map[web_id] = annotation
             annotations.append(
-                WebAnnotation.from_scheme_annotation(annotation).to_dict()
+                WebAnnotation.from_scheme_annotation(annotation, web_id).to_dict()
             )
 
         return {
@@ -649,9 +681,9 @@ class OrangeSchemeAdapter:
 
         self._scheme.add_node(node)
 
-        web_id = str(id(node))
+        web_id = str(uuid.uuid4())
         self._node_map[web_id] = node
-        return WebSchemeNode.from_scheme_node(node).to_dict()
+        return WebSchemeNode.from_scheme_node(node, web_id).to_dict()
 
     def remove_node(self, node_id: str) -> bool:
         """Remove a node using existing Scheme method."""
@@ -719,11 +751,12 @@ class OrangeSchemeAdapter:
             logger.error(f"Error adding link: {e}")
             return None
 
-        web_id = str(id(link))
+        web_id = str(uuid.uuid4())
         self._link_map[web_id] = link
 
-        node_id_map = {id(n): str(id(n)) for n in self._scheme.nodes}
-        return WebSchemeLink.from_scheme_link(link, node_id_map).to_dict()
+        # Build node_id_map using stable UUIDs already in _node_map
+        node_id_map = {id(n): k for k, n in self._node_map.items()}
+        return WebSchemeLink.from_scheme_link(link, web_id, node_id_map).to_dict()
 
     def remove_link(self, link_id: str) -> bool:
         """Remove a link."""
@@ -745,9 +778,9 @@ class OrangeSchemeAdapter:
         annotation = SchemeTextAnnotation(rect=rect, text=content)
         self._scheme.add_annotation(annotation)
 
-        web_id = str(id(annotation))
+        web_id = str(uuid.uuid4())
         self._annotation_map[web_id] = annotation
-        return WebAnnotation.from_scheme_annotation(annotation).to_dict()
+        return WebAnnotation.from_scheme_annotation(annotation, web_id).to_dict()
 
     def add_arrow_annotation(
         self,
@@ -761,9 +794,9 @@ class OrangeSchemeAdapter:
         )
         self._scheme.add_annotation(annotation)
 
-        web_id = str(id(annotation))
+        web_id = str(uuid.uuid4())
         self._annotation_map[web_id] = annotation
-        return WebAnnotation.from_scheme_annotation(annotation).to_dict()
+        return WebAnnotation.from_scheme_annotation(annotation, web_id).to_dict()
 
     def remove_annotation(self, annotation_id: str) -> bool:
         """Remove annotation."""
@@ -790,9 +823,11 @@ class OrangeSchemeAdapter:
         try:
             stream = io.BytesIO(ows_content.encode("utf-8"))
             self._scheme = scheme_load(stream, registry=self._registry)
-            self._node_map = {str(id(n)): n for n in self._scheme.nodes}
-            self._link_map = {str(id(l)): l for l in self._scheme.links}
-            self._annotation_map = {str(id(a)): a for a in self._scheme.annotations}
+            self._node_map = {str(uuid.uuid4()): n for n in self._scheme.nodes}
+            self._link_map = {str(uuid.uuid4()): l for l in self._scheme.links}
+            self._annotation_map = {
+                str(uuid.uuid4()): a for a in self._scheme.annotations
+            }
             return True
         except Exception as e:
             logger.error(f"Error importing OWS: {e}")
@@ -814,14 +849,6 @@ def get_availability() -> Dict[str, bool]:
 # Automatically discovers Orange3 widgets by scanning widget directories
 # and parsing Python files using AST (no import required).
 # =============================================================================
-
-import os
-import ast
-import re
-import sys
-import site
-import logging
-from pathlib import Path
 
 
 def _get_orange3_path_from_import() -> Optional[str]:
@@ -851,8 +878,8 @@ def _get_site_packages_paths() -> List[str]:
         for sp in site.getsitepackages():
             if sp and os.path.isdir(sp):
                 paths.append(sp)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Skipped site.getsitepackages(): {e}")
 
     venv_path = os.environ.get("VIRTUAL_ENV")
     if venv_path:
@@ -886,7 +913,8 @@ def _read_icon_as_base64(icon_path: str) -> Optional[str]:
             mime_type = "image/svg+xml"  # Default to SVG
 
         return f"data:{mime_type};base64,{b64}"
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Skipped {icon_path}: {e}")
         return None
 
 
@@ -1102,8 +1130,8 @@ def _get_dynamic_inheritance(class_name: str) -> List[str]:
                 parent_name = parent.__name__
                 if parent_name in PARENT_CLASS_PORTS:
                     result.append(parent_name)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Skipped {class_name}: {e}")
 
     _DYNAMIC_INHERITANCE_CACHE[class_name] = result
     return result
@@ -1116,9 +1144,8 @@ class FilesystemWidgetDiscovery:
     and includes widget icons as Base64 data URLs.
     """
 
-    WIDGET_NAME_OVERRIDES = {
-        "Column Statistics": "Feature Statistics",
-    }
+    # 위젯 이름 매핑 — module-level constant
+    WIDGET_NAME_OVERRIDES = WIDGET_NAME_OVERRIDES
 
     def __init__(self, orange3_path: Optional[str] = None):
         self.orange3_path = orange3_path or self._find_orange3_path()
@@ -1262,8 +1289,8 @@ class FilesystemWidgetDiscovery:
                     cat_bg = bg_match.group(1)
                 if priority_match:
                     cat_priority = int(priority_match.group(1))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Skipped {init_file}: {e}")
 
         return {"name": cat_name, "background": cat_bg, "priority": cat_priority}
 
@@ -1308,7 +1335,8 @@ class FilesystemWidgetDiscovery:
                         return info
 
             return None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Skipped {filepath}: {e}")
             return None
 
     def _extract_parent_classes(self, node: ast.ClassDef) -> List[str]:
