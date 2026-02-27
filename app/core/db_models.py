@@ -20,6 +20,82 @@ def generate_uuid() -> str:
     return str(uuid.uuid4())
 
 
+class UserRole:
+    """User role constants."""
+    ADMIN = "admin"
+    USER = "user"
+    VIEWER = "viewer"
+
+
+class UserDB(Base):
+    """
+    User database model for authentication.
+    Supports local email/password auth and OAuth (Google, GitHub).
+    """
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # nullable for OAuth users
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    # Role-based access control
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default=UserRole.USER)
+
+    # OAuth provider fields
+    google_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    github_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Account status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Refresh tokens: one-to-many relationship
+    refresh_tokens: Mapped[List["RefreshTokenDB"]] = relationship(
+        "RefreshTokenDB", back_populates="user", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("idx_user_email", "email"),
+        Index("idx_user_google_id", "google_id"),
+        Index("idx_user_github_id", "github_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email={self.email}, role={self.role})>"
+
+
+class RefreshTokenDB(Base):
+    """
+    Stored refresh tokens for invalidation support on logout.
+    Expired tokens should be periodically cleaned up.
+    """
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)  # SHA256 hash
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="refresh_tokens")
+
+    __table_args__ = (
+        Index("idx_refresh_token_hash", "token_hash"),
+        Index("idx_refresh_token_user", "user_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RefreshToken(id={self.id}, user_id={self.user_id}, revoked={self.revoked})>"
+
+
 class TaskStatus:
     """Task status constants."""
     PENDING = "pending"

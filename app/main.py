@@ -1196,6 +1196,11 @@ api_v1.include_router(workflow_router)
 # Include Widget Registry Router
 api_v1.include_router(widget_registry_router)
 
+# Include Auth Router
+from .auth_routes import router as auth_router  # noqa: E402
+
+api_v1.include_router(auth_router)
+
 # ============================================================================
 # Include Main Router
 # ============================================================================
