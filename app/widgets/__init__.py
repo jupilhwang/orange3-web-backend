@@ -25,6 +25,8 @@ from .naive_bayes import router as naive_bayes_router
 from .logistic_regression import router as logistic_regression_router
 from .random_forest import router as random_forest_router
 from .linear_regression import router as linear_regression_router
+from .svm import router as svm_router
+from .neural_network import router as neural_network_router
 
 # Import widget routers - Evaluate
 from .predictions import router as predictions_router
@@ -33,6 +35,7 @@ from .confusion_matrix import router as confusion_matrix_router
 
 # Import widget routers - Unsupervised
 from .kmeans import router as kmeans_router
+from .pca import router as pca_router
 
 # Import widget routers - Text Mining
 from .corpus import router as corpus_router
@@ -64,12 +67,15 @@ __all__ = [
     "logistic_regression_router",
     "random_forest_router",
     "linear_regression_router",
+    "svm_router",
+    "neural_network_router",
     # Evaluate widgets
     "predictions_router",
     "test_and_score_router",
     "confusion_matrix_router",
     # Unsupervised widgets
     "kmeans_router",
+    "pca_router",
     # Text Mining widgets
     "corpus_router",
     "preprocess_text_router",

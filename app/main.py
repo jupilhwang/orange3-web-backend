@@ -207,10 +207,13 @@ from .widgets import (
     logistic_regression_router,
     random_forest_router,
     linear_regression_router,
+    svm_router,
+    neural_network_router,
     predictions_router,
     test_and_score_router,
     confusion_matrix_router,
     kmeans_router,
+    pca_router,
     corpus_router,
     preprocess_text_router,
     bag_of_words_router,
@@ -1170,10 +1173,13 @@ api_v1.include_router(naive_bayes_router)
 api_v1.include_router(logistic_regression_router)
 api_v1.include_router(random_forest_router)
 api_v1.include_router(linear_regression_router)
+api_v1.include_router(svm_router)
+api_v1.include_router(neural_network_router)
 api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
 api_v1.include_router(confusion_matrix_router)
 api_v1.include_router(kmeans_router)
+api_v1.include_router(pca_router)
 api_v1.include_router(corpus_router)
 api_v1.include_router(preprocess_text_router)
 api_v1.include_router(bag_of_words_router)
