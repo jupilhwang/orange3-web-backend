@@ -7,13 +7,38 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
+# Custom EmailStr that allows local domains like orange3.local
+class _CustomEmailStr(str):
+    """Custom email that allows special/local domains."""
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, v, info=None):
+        from pydantic import EmailStr
+
+        # Try standard validation first
+        try:
+            EmailStr.validate(v, info)
+            return v
+        except:
+            # Allow if it looks like email@domain (has @ and a domain part)
+            if isinstance(v, str) and "@" in v:
+                parts = v.rsplit("@", 1)
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    return v
+            raise ValueError("Invalid email format")
+
+
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: _CustomEmailStr
     password: str = Field(min_length=6, max_length=128)
     name: str = Field(min_length=1, max_length=255)
 
@@ -24,7 +49,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: _CustomEmailStr
     password: str = Field(min_length=1)
 
 
@@ -48,7 +73,8 @@ class UpdateProfileRequest(BaseModel):
 
 class OAuthRequest(BaseModel):
     """OAuth token exchange request (Google / GitHub)."""
-    code: str                    # authorization code from provider
+
+    code: str  # authorization code from provider
     redirect_uri: Optional[str] = None
 
 
