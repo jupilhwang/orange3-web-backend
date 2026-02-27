@@ -20,9 +20,13 @@ from fastapi import (
     UploadFile,
     File,
     Header,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 import asyncio
 import ipaddress
 import os
@@ -36,6 +40,16 @@ import json
 import uuid
 import time
 from pydantic import BaseModel
+
+
+# ============================================================================
+# Rate Limiting
+# ============================================================================
+
+# Import the shared limiter so that widget/auth routers can reuse it without
+# a circular import.  Limits are configurable via environment variables — see
+# app/core/rate_limit.py for details.
+from .core.rate_limit import limiter, LIMIT_UPLOAD
 
 # Server startup timestamp - used to detect server restarts
 SERVER_START_TIME = int(time.time())
@@ -532,6 +546,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Attach the limiter instance and register the 429 error handler.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS
 # Allow runtime configuration via CORS_ALLOW_ORIGINS (comma-separated list).
 # Defaults to wildcard "*" for development; set explicit origins in production.
@@ -545,6 +563,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Warn when wildcard origins are combined with allow_credentials=True.
+# Browsers block such responses (CORS spec violation), and it signals a
+# misconfiguration that could weaken security in production.
+if "*" in cors_origins:
+    _cors_logger = logging.getLogger(__name__)
+    _cors_logger.warning(
+        "CORS misconfiguration: allow_credentials=True is set alongside "
+        "wildcard origins ('*'). Browsers will block credentialed requests "
+        "to this server. Set CORS_ALLOW_ORIGINS to explicit origin(s) in "
+        "production (e.g. 'https://example.com')."
+    )
+
+# Rate-limiting middleware — enforces default_limits defined on the Limiter
+# and adds X-RateLimit-* / Retry-After headers to every response.
+app.add_middleware(SlowAPIMiddleware)
 
 
 # Reverse proxy header support
@@ -878,6 +912,15 @@ async def _resolve_file_path(
     elif path.startswith("datasets/"):
         # Built-in Orange3 datasets — strip path prefix and extension
         actual_path = path.replace("datasets/", "").split(".")[0]
+
+    elif "/" in path and not path.startswith(("/", ".")):
+        # Datasets widget paths (e.g. "core/iris.tab") stored in datasets_cache/
+        from .core.config import get_datasets_cache_dir as _get_datasets_cache_dir
+
+        datasets_cache_dir = _get_datasets_cache_dir()
+        full_path = datasets_cache_dir / path
+        if full_path.exists():
+            actual_path = str(full_path)
 
     return actual_path, temp_file, metadata
 

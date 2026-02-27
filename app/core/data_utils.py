@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 # Upload directory
 UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
 
+# Datasets cache directory (relative to app root: backend/datasets_cache)
+DATASETS_CACHE_DIR = Path(__file__).parent.parent.parent / "datasets_cache"
+
 # Check Orange3 availability
 try:
     from Orange.data import Table
@@ -439,6 +442,13 @@ def load_data(data_path: str, session_id: str = None) -> Optional["Table"]:
         if data_path.startswith("datasets/"):
             dataset_name = data_path.replace("datasets/", "").split(".")[0]
             return Table(dataset_name)
+
+        # Handle datasets widget paths (e.g. "core/iris.tab", "core/housing.tab")
+        # These are stored in datasets_cache/core/ on the local filesystem
+        if "/" in data_path and not data_path.startswith(("/", ".")):
+            resolved_path = DATASETS_CACHE_DIR / data_path
+            if resolved_path.exists():
+                return Table(str(resolved_path))
 
         # Direct path or dataset name
         return Table(data_path)
