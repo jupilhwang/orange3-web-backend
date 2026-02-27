@@ -1,0 +1,90 @@
+{
+    "path": "datasets/heart_disease.tab",
+    "columns": [
+        {
+            "name": "age",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "gender",
+            "type": "categorical",
+            "role": "feature",
+            "values": "female, male"
+        },
+        {
+            "name": "chest pain",
+            "type": "categorical",
+            "role": "feature",
+            "values": "asymptomatic, atypical ang, non-anginal, typical ang"
+        },
+        {
+            "name": "rest SBP",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "cholesterol",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "fasting blood sugar > 120",
+            "type": "categorical",
+            "role": "feature",
+            "values": "0, 1"
+        },
+        {
+            "name": "rest ECG",
+            "type": "categorical",
+            "role": "feature",
+            "values": "normal, left vent hypertrophy, ST-T abnormal"
+        },
+        {
+            "name": "max HR",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "exerc ind ang",
+            "type": "categorical",
+            "role": "feature",
+            "values": "0, 1"
+        },
+        {
+            "name": "ST by exercise",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "slope peak exc ST",
+            "type": "categorical",
+            "role": "feature",
+            "values": "upsloping, flat, downsloping"
+        },
+        {
+            "name": "major vessels colored",
+            "type": "numeric",
+            "role": "feature",
+            "values": ""
+        },
+        {
+            "name": "thal",
+            "type": "categorical",
+            "role": "feature",
+            "values": "normal, reversable defect, fixed defect"
+        },
+        {
+            "name": "diameter narrowing",
+            "type": "categorical",
+            "role": "target",
+            "values": "0, 1"
+        }
+    ],
+    "updated_at": "2026-02-27T11:59:37.126088"
+}
