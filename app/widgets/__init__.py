@@ -9,9 +9,11 @@ from fastapi import APIRouter
 from .scatter_plot import router as scatter_plot_router
 from .distributions import router as distributions_router
 from .bar_plot import router as bar_plot_router
+from .box_plot import router as box_plot_router
 from .heat_map import router as heat_map_router
 from .select_columns import router as select_columns_router
 from .select_rows import router as select_rows_router
+from .group_by import router as group_by_router
 from .file_upload import router as file_upload_router
 from .data_sampler import router as data_sampler_router
 from .datasets import router as datasets_router
@@ -23,6 +25,8 @@ from .naive_bayes import router as naive_bayes_router
 from .logistic_regression import router as logistic_regression_router
 from .random_forest import router as random_forest_router
 from .linear_regression import router as linear_regression_router
+from .svm import router as svm_router
+from .neural_network import router as neural_network_router
 
 # Import widget routers - Evaluate
 from .predictions import router as predictions_router
@@ -31,6 +35,7 @@ from .confusion_matrix import router as confusion_matrix_router
 
 # Import widget routers - Unsupervised
 from .kmeans import router as kmeans_router
+from .pca import router as pca_router
 
 # Import widget routers - Text Mining
 from .corpus import router as corpus_router
@@ -42,14 +47,19 @@ from .word_cloud import router as word_cloud_router
 from .data_info import router as data_info_router
 from .feature_statistics import router as feature_statistics_router
 
+# Import geo widget router
+from .geo import router as geo_router
+
 __all__ = [
     # Data widgets
     "scatter_plot_router",
     "distributions_router",
     "bar_plot_router",
+    "box_plot_router",
     "heat_map_router",
     "select_columns_router",
     "select_rows_router",
+    "group_by_router",
     "file_upload_router",
     "data_sampler_router",
     "datasets_router",
@@ -60,12 +70,15 @@ __all__ = [
     "logistic_regression_router",
     "random_forest_router",
     "linear_regression_router",
+    "svm_router",
+    "neural_network_router",
     # Evaluate widgets
     "predictions_router",
     "test_and_score_router",
     "confusion_matrix_router",
     # Unsupervised widgets
     "kmeans_router",
+    "pca_router",
     # Text Mining widgets
     "corpus_router",
     "preprocess_text_router",
@@ -74,5 +87,6 @@ __all__ = [
     # Utility routers
     "data_info_router",
     "feature_statistics_router",
+    # Geo widget
+    "geo_router",
 ]
-

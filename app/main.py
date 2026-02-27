@@ -193,9 +193,11 @@ from .widgets import (
     scatter_plot_router,
     distributions_router,
     bar_plot_router,
+    box_plot_router,
     heat_map_router,
     select_columns_router,
     select_rows_router,
+    group_by_router,
     file_upload_router,
     data_sampler_router,
     datasets_router,
@@ -205,10 +207,13 @@ from .widgets import (
     logistic_regression_router,
     random_forest_router,
     linear_regression_router,
+    svm_router,
+    neural_network_router,
     predictions_router,
     test_and_score_router,
     confusion_matrix_router,
     kmeans_router,
+    pca_router,
     corpus_router,
     preprocess_text_router,
     bag_of_words_router,
@@ -1154,9 +1159,11 @@ async def legacy_widgets() -> dict:
 api_v1.include_router(scatter_plot_router)
 api_v1.include_router(distributions_router)
 api_v1.include_router(bar_plot_router)
+api_v1.include_router(box_plot_router)
 api_v1.include_router(heat_map_router)
 api_v1.include_router(select_columns_router)
 api_v1.include_router(select_rows_router)
+api_v1.include_router(group_by_router)
 api_v1.include_router(file_upload_router)
 api_v1.include_router(data_sampler_router)
 api_v1.include_router(datasets_router)
@@ -1166,10 +1173,13 @@ api_v1.include_router(naive_bayes_router)
 api_v1.include_router(logistic_regression_router)
 api_v1.include_router(random_forest_router)
 api_v1.include_router(linear_regression_router)
+api_v1.include_router(svm_router)
+api_v1.include_router(neural_network_router)
 api_v1.include_router(predictions_router)
 api_v1.include_router(test_and_score_router)
 api_v1.include_router(confusion_matrix_router)
 api_v1.include_router(kmeans_router)
+api_v1.include_router(pca_router)
 api_v1.include_router(corpus_router)
 api_v1.include_router(preprocess_text_router)
 api_v1.include_router(bag_of_words_router)
@@ -1185,6 +1195,11 @@ api_v1.include_router(workflow_router)
 
 # Include Widget Registry Router
 api_v1.include_router(widget_registry_router)
+
+# Include Auth Router
+from .auth_routes import router as auth_router  # noqa: E402
+
+api_v1.include_router(auth_router)
 
 # ============================================================================
 # Include Main Router

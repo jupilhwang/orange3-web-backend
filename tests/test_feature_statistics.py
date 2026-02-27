@@ -177,7 +177,7 @@ class TestFeatureStatisticsAPI:
         """통계 계산 API 성공 테스트"""
         from app.widgets.feature_statistics import compute_feature_statistics, FeatureStatisticsRequest
         
-        with patch('app.widgets.feature_statistics.load_data') as mock_load:
+        with patch('app.core.data_utils.load_data') as mock_load:
             mock_load.return_value = iris_data
             
             request = FeatureStatisticsRequest(data_path="datasets/iris")
@@ -193,7 +193,7 @@ class TestFeatureStatisticsAPI:
         """데이터 없음 테스트"""
         from app.widgets.feature_statistics import compute_feature_statistics, FeatureStatisticsRequest
         
-        with patch('app.widgets.feature_statistics.load_data') as mock_load:
+        with patch('app.core.data_utils.load_data') as mock_load:
             mock_load.return_value = None
             
             request = FeatureStatisticsRequest(data_path="nonexistent")
@@ -207,7 +207,7 @@ class TestFeatureStatisticsAPI:
         """Reduced Data API 테스트"""
         from app.widgets.feature_statistics import get_reduced_data, ReducedDataRequest
         
-        with patch('app.widgets.feature_statistics.load_data') as mock_load:
+        with patch('app.core.data_utils.load_data') as mock_load:
             mock_load.return_value = iris_data
             
             request = ReducedDataRequest(
@@ -306,7 +306,7 @@ class TestFeatureStatisticsIntegration:
             ReducedDataRequest
         )
         
-        with patch('app.widgets.feature_statistics.load_data') as mock_load:
+        with patch('app.core.data_utils.load_data') as mock_load:
             mock_load.return_value = iris_data
             
             # Step 1: Compute statistics
@@ -341,7 +341,7 @@ class TestFeatureStatisticsIntegration:
             FeatureStatisticsRequest
         )
         
-        with patch('app.widgets.feature_statistics.load_data') as mock_load:
+        with patch('app.core.data_utils.load_data') as mock_load:
             mock_load.return_value = housing_data
             
             request = FeatureStatisticsRequest(data_path="datasets/housing")
