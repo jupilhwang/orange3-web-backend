@@ -1,6 +1,14 @@
 """
 Pytest fixtures for Orange3 Web Backend Tests
 """
+import os
+# Disable requests version warning at earliest possible point
+os.environ["REQUESTS_CA_BUNDLE"] = ""
+os.environ["PYTHONWARNINGS"] = "ignore::requests.packages.urllib3.exceptions.SecurityWarning"
+
+import warnings
+warnings.filterwarnings("ignore")
+
 import pytest
 import asyncio
 from typing import AsyncGenerator, Generator

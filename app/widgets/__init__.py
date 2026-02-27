@@ -47,6 +47,9 @@ from .word_cloud import router as word_cloud_router
 from .data_info import router as data_info_router
 from .feature_statistics import router as feature_statistics_router
 
+# Import geo widget router
+from .geo import router as geo_router
+
 __all__ = [
     # Data widgets
     "scatter_plot_router",
@@ -84,4 +87,6 @@ __all__ = [
     # Utility routers
     "data_info_router",
     "feature_statistics_router",
+    # Geo widget
+    "geo_router",
 ]
