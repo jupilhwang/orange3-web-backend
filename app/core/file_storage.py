@@ -28,6 +28,7 @@ from typing import Optional, List, BinaryIO, Union, Tuple
 from dataclasses import dataclass
 
 from sqlalchemy import select, delete
+from sqlalchemy.orm import load_only
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import (
@@ -485,9 +486,31 @@ class DatabaseStorage(StorageBackend):
     async def get_metadata(
         self, file_id: str, tenant_id: Optional[str] = None
     ) -> Optional[StoredFile]:
-        """Get file metadata from database."""
+        """Get file metadata from database.
+
+        Uses load_only() to exclude the file_data BLOB column — avoids loading
+        potentially large binary payloads when only metadata is needed.
+        """
         async with self._session_maker() as session:
-            query = select(FileStorageDB).where(FileStorageDB.id == file_id)
+            query = (
+                select(FileStorageDB)
+                .where(FileStorageDB.id == file_id)
+                .options(
+                    load_only(
+                        FileStorageDB.id,
+                        FileStorageDB.tenant_id,
+                        FileStorageDB.filename,
+                        FileStorageDB.original_filename,
+                        FileStorageDB.content_type,
+                        FileStorageDB.file_size,
+                        FileStorageDB.original_size,
+                        FileStorageDB.checksum,
+                        FileStorageDB.is_compressed,
+                        FileStorageDB.category,
+                        FileStorageDB.created_at,
+                    )
+                )
+            )
             if tenant_id:
                 query = query.where(FileStorageDB.tenant_id == tenant_id)
 
@@ -528,9 +551,31 @@ class DatabaseStorage(StorageBackend):
     async def list_files(
         self, tenant_id: str, category: Optional[str] = None
     ) -> List[StoredFile]:
-        """List files for a tenant from database."""
+        """List files for a tenant from database.
+
+        Excludes file_data BLOB from the SELECT to avoid loading large binary
+        payloads when only the file listing metadata is needed.
+        """
         async with self._session_maker() as session:
-            query = select(FileStorageDB).where(FileStorageDB.tenant_id == tenant_id)
+            query = (
+                select(FileStorageDB)
+                .where(FileStorageDB.tenant_id == tenant_id)
+                .options(
+                    load_only(
+                        FileStorageDB.id,
+                        FileStorageDB.tenant_id,
+                        FileStorageDB.filename,
+                        FileStorageDB.original_filename,
+                        FileStorageDB.content_type,
+                        FileStorageDB.file_size,
+                        FileStorageDB.original_size,
+                        FileStorageDB.checksum,
+                        FileStorageDB.is_compressed,
+                        FileStorageDB.category,
+                        FileStorageDB.created_at,
+                    )
+                )
+            )
             if category:
                 query = query.where(FileStorageDB.category == category)
             query = query.order_by(FileStorageDB.created_at.desc())

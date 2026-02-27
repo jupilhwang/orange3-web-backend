@@ -18,9 +18,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError
 from sqlalchemy import select, update as sql_update
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.auth import (
@@ -47,6 +48,7 @@ from ..core.auth_schemas import (
 )
 from ..core.database import get_db
 from ..core.db_models import RefreshTokenDB, UserDB, UserRole
+from ..core.rate_limit import limiter, LIMIT_AUTH
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,9 @@ async def _store_refresh_token(
     await db.flush()
 
 
-def _build_auth_response(user: UserDB, access_token: str, refresh_token: str) -> AuthResponse:
+def _build_auth_response(
+    user: UserDB, access_token: str, refresh_token: str
+) -> AuthResponse:
     return AuthResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -114,8 +118,12 @@ def _build_auth_response(user: UserDB, access_token: str, refresh_token: str) ->
 # ---------------------------------------------------------------------------
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED
+)
+@limiter.limit(LIMIT_AUTH)
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -124,7 +132,10 @@ async def register(
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"error": "user_exists", "message": "User with this email already exists"},
+            detail={
+                "error": "user_exists",
+                "message": "User with this email already exists",
+            },
         )
 
     user = UserDB(
@@ -139,7 +150,9 @@ async def register(
 
     access_token = create_access_token(user.id, user.email, user.role)
     refresh_token = create_refresh_token(user.id)
-    await _store_refresh_token(db, user.id, refresh_token, get_refresh_token_expire_days())
+    await _store_refresh_token(
+        db, user.id, refresh_token, get_refresh_token_expire_days()
+    )
 
     logger.info(f"[Auth] New user registered: {user.email} ({user.id})")
     return _build_auth_response(user, access_token, refresh_token)
@@ -151,7 +164,9 @@ async def register(
 
 
 @router.post("/login", response_model=AuthResponse)
+@limiter.limit(LIMIT_AUTH)
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -160,10 +175,17 @@ async def login(
     user = result.scalar_one_or_none()
 
     # Constant-time path to prevent user enumeration
-    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
+    if (
+        not user
+        or not user.password_hash
+        or not verify_password(body.password, user.password_hash)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "invalid_credentials", "message": "Invalid email or password"},
+            detail={
+                "error": "invalid_credentials",
+                "message": "Invalid email or password",
+            },
         )
 
     if not user.is_active:
@@ -178,7 +200,9 @@ async def login(
 
     access_token = create_access_token(user.id, user.email, user.role)
     refresh_token = create_refresh_token(user.id)
-    await _store_refresh_token(db, user.id, refresh_token, get_refresh_token_expire_days())
+    await _store_refresh_token(
+        db, user.id, refresh_token, get_refresh_token_expire_days()
+    )
 
     logger.info(f"[Auth] User logged in: {user.email}")
     return _build_auth_response(user, access_token, refresh_token)
@@ -190,14 +214,19 @@ async def login(
 
 
 @router.post("/refresh", response_model=AuthResponse)
+@limiter.limit(LIMIT_AUTH)
 async def refresh_token(
+    request: Request,
     body: RefreshRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
     """Exchange a valid refresh token for a new access + refresh token pair (rotation)."""
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail={"error": "invalid_token", "message": "Invalid or expired refresh token"},
+        detail={
+            "error": "invalid_token",
+            "message": "Invalid or expired refresh token",
+        },
     )
 
     try:
@@ -211,12 +240,15 @@ async def refresh_token(
     user_id: str = payload.get("sub", "")
     token_hash = hash_token(body.refresh_token)
 
-    # Verify token is in DB and not revoked
+    # Verify token is in DB and not revoked; joinedload fetches the user row
+    # in the same query to avoid a second round-trip for the user lookup below.
     result = await db.execute(
-        select(RefreshTokenDB).where(
+        select(RefreshTokenDB)
+        .where(
             RefreshTokenDB.token_hash == token_hash,
             RefreshTokenDB.revoked == False,  # noqa: E712
         )
+        .options(joinedload(RefreshTokenDB.user))
     )
     stored_token = result.scalar_one_or_none()
     if not stored_token:
@@ -226,14 +258,16 @@ async def refresh_token(
     stored_token.revoked = True
     db.add(stored_token)
 
-    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
-    user = result.scalar_one_or_none()
+    # User was already loaded via joinedload — no extra DB round-trip needed
+    user = stored_token.user
     if not user or not user.is_active:
         raise credentials_error
 
     access_token = create_access_token(user.id, user.email, user.role)
     new_refresh_token = create_refresh_token(user.id)
-    await _store_refresh_token(db, user.id, new_refresh_token, get_refresh_token_expire_days())
+    await _store_refresh_token(
+        db, user.id, new_refresh_token, get_refresh_token_expire_days()
+    )
 
     logger.info(f"[Auth] Token refreshed for user: {user.email}")
     return _build_auth_response(user, access_token, new_refresh_token)
@@ -245,7 +279,9 @@ async def refresh_token(
 
 
 @router.post("/logout", response_model=MessageResponse)
+@limiter.limit(LIMIT_AUTH)
 async def logout(
+    request: Request,
     body: Optional[RefreshRequest] = None,
     db: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
@@ -303,7 +339,9 @@ async def update_me(
 
 
 @router.put("/password", response_model=MessageResponse)
+@limiter.limit(LIMIT_AUTH)
 async def change_password(
+    request: Request,
     body: ChangePasswordRequest,
     current_user: UserDB = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
@@ -314,7 +352,10 @@ async def change_password(
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "invalid_password", "message": "Current password is incorrect"},
+            detail={
+                "error": "invalid_password",
+                "message": "Current password is incorrect",
+            },
         )
 
     current_user.password_hash = hash_password(body.new_password)
@@ -339,7 +380,9 @@ async def change_password(
 
 
 @router.post("/google", response_model=AuthResponse)
+@limiter.limit(LIMIT_AUTH)
 async def google_oauth(
+    request: Request,
     body: OAuthRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -352,7 +395,10 @@ async def google_oauth(
     if not client_id or not client_secret:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail={"error": "oauth_not_configured", "message": "Google OAuth is not configured"},
+            detail={
+                "error": "oauth_not_configured",
+                "message": "Google OAuth is not configured",
+            },
         )
 
     async with httpx.AsyncClient() as http_client:
@@ -369,7 +415,10 @@ async def google_oauth(
         if token_resp.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "oauth_failed", "message": "Google token exchange failed"},
+                detail={
+                    "error": "oauth_failed",
+                    "message": "Google token exchange failed",
+                },
             )
         google_tokens = token_resp.json()
 
@@ -380,7 +429,10 @@ async def google_oauth(
         if userinfo_resp.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "oauth_failed", "message": "Failed to fetch Google user info"},
+                detail={
+                    "error": "oauth_failed",
+                    "message": "Failed to fetch Google user info",
+                },
             )
         google_user = userinfo_resp.json()
 
@@ -401,7 +453,13 @@ async def google_oauth(
         user = result.scalar_one_or_none()
 
     if not user:
-        user = UserDB(email=email, name=name, role=UserRole.USER, google_id=google_id, is_active=True)
+        user = UserDB(
+            email=email,
+            name=name,
+            role=UserRole.USER,
+            google_id=google_id,
+            is_active=True,
+        )
         db.add(user)
         await db.flush()
     else:
@@ -413,7 +471,9 @@ async def google_oauth(
 
     access_token = create_access_token(user.id, user.email, user.role)
     refresh_token = create_refresh_token(user.id)
-    await _store_refresh_token(db, user.id, refresh_token, get_refresh_token_expire_days())
+    await _store_refresh_token(
+        db, user.id, refresh_token, get_refresh_token_expire_days()
+    )
 
     logger.info(f"[Auth] Google OAuth login: {user.email}")
     return _build_auth_response(user, access_token, refresh_token)
@@ -425,7 +485,9 @@ async def google_oauth(
 
 
 @router.post("/github", response_model=AuthResponse)
+@limiter.limit(LIMIT_AUTH)
 async def github_oauth(
+    request: Request,
     body: OAuthRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
@@ -438,7 +500,10 @@ async def github_oauth(
     if not client_id or not client_secret:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail={"error": "oauth_not_configured", "message": "GitHub OAuth is not configured"},
+            detail={
+                "error": "oauth_not_configured",
+                "message": "GitHub OAuth is not configured",
+            },
         )
 
     async with httpx.AsyncClient() as http_client:
@@ -454,24 +519,36 @@ async def github_oauth(
         if token_resp.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "oauth_failed", "message": "GitHub token exchange failed"},
+                detail={
+                    "error": "oauth_failed",
+                    "message": "GitHub token exchange failed",
+                },
             )
         github_tokens = token_resp.json()
         gh_access_token = github_tokens.get("access_token", "")
         if not gh_access_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "oauth_failed", "message": "GitHub returned no access token"},
+                detail={
+                    "error": "oauth_failed",
+                    "message": "GitHub returned no access token",
+                },
             )
 
         user_resp = await http_client.get(
             _GITHUB_USER_URL,
-            headers={"Authorization": f"token {gh_access_token}", "Accept": "application/json"},
+            headers={
+                "Authorization": f"token {gh_access_token}",
+                "Accept": "application/json",
+            },
         )
         if user_resp.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"error": "oauth_failed", "message": "Failed to fetch GitHub user info"},
+                detail={
+                    "error": "oauth_failed",
+                    "message": "Failed to fetch GitHub user info",
+                },
             )
         gh_user = user_resp.json()
 
@@ -479,7 +556,10 @@ async def github_oauth(
         if not email:
             emails_resp = await http_client.get(
                 _GITHUB_EMAILS_URL,
-                headers={"Authorization": f"token {gh_access_token}", "Accept": "application/json"},
+                headers={
+                    "Authorization": f"token {gh_access_token}",
+                    "Accept": "application/json",
+                },
             )
             if emails_resp.status_code == 200:
                 for entry in emails_resp.json():
@@ -493,7 +573,10 @@ async def github_oauth(
     if not email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"error": "oauth_failed", "message": "GitHub account has no accessible email"},
+            detail={
+                "error": "oauth_failed",
+                "message": "GitHub account has no accessible email",
+            },
         )
 
     result = await db.execute(select(UserDB).where(UserDB.github_id == github_id))
@@ -503,7 +586,13 @@ async def github_oauth(
         user = result.scalar_one_or_none()
 
     if not user:
-        user = UserDB(email=email, name=name, role=UserRole.USER, github_id=github_id, is_active=True)
+        user = UserDB(
+            email=email,
+            name=name,
+            role=UserRole.USER,
+            github_id=github_id,
+            is_active=True,
+        )
         db.add(user)
         await db.flush()
     else:
@@ -515,7 +604,9 @@ async def github_oauth(
 
     access_token = create_access_token(user.id, user.email, user.role)
     refresh_token = create_refresh_token(user.id)
-    await _store_refresh_token(db, user.id, refresh_token, get_refresh_token_expire_days())
+    await _store_refresh_token(
+        db, user.id, refresh_token, get_refresh_token_expire_days()
+    )
 
     logger.info(f"[Auth] GitHub OAuth login: {user.email}")
     return _build_auth_response(user, access_token, refresh_token)

@@ -1,8 +1,12 @@
 aif360==0.6.1
+slowapi==0.1.9
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
+# bcrypt must be pinned to <4.0.0: bcrypt 4.x removed __about__.__version__
+# which passlib 1.7.4 depends on, causing "ValueError: password cannot be
+# longer than 72 bytes". Use 3.2.2 as the last known compatible version.
+bcrypt==3.2.2
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.3
 aiosignal==1.4.0
