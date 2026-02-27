@@ -193,6 +193,7 @@ from .widgets import (
     scatter_plot_router,
     distributions_router,
     bar_plot_router,
+    box_plot_router,
     heat_map_router,
     select_columns_router,
     select_rows_router,
@@ -1154,6 +1155,7 @@ async def legacy_widgets() -> dict:
 api_v1.include_router(scatter_plot_router)
 api_v1.include_router(distributions_router)
 api_v1.include_router(bar_plot_router)
+api_v1.include_router(box_plot_router)
 api_v1.include_router(heat_map_router)
 api_v1.include_router(select_columns_router)
 api_v1.include_router(select_rows_router)
