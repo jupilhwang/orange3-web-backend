@@ -197,6 +197,7 @@ from .widgets import (
     heat_map_router,
     select_columns_router,
     select_rows_router,
+    group_by_router,
     file_upload_router,
     data_sampler_router,
     datasets_router,
@@ -1159,6 +1160,7 @@ api_v1.include_router(box_plot_router)
 api_v1.include_router(heat_map_router)
 api_v1.include_router(select_columns_router)
 api_v1.include_router(select_rows_router)
+api_v1.include_router(group_by_router)
 api_v1.include_router(file_upload_router)
 api_v1.include_router(data_sampler_router)
 api_v1.include_router(datasets_router)

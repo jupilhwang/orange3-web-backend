@@ -13,6 +13,7 @@ from .box_plot import router as box_plot_router
 from .heat_map import router as heat_map_router
 from .select_columns import router as select_columns_router
 from .select_rows import router as select_rows_router
+from .group_by import router as group_by_router
 from .file_upload import router as file_upload_router
 from .data_sampler import router as data_sampler_router
 from .datasets import router as datasets_router
@@ -52,6 +53,7 @@ __all__ = [
     "heat_map_router",
     "select_columns_router",
     "select_rows_router",
+    "group_by_router",
     "file_upload_router",
     "data_sampler_router",
     "datasets_router",
