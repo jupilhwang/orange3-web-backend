@@ -3,6 +3,8 @@ Datasets Widget API endpoints.
 Online dataset repository integration.
 """
 
+import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -20,98 +22,189 @@ router = APIRouter(prefix="/datasets", tags=["Datasets"])
 DATASETS_INDEX_URL = "https://datasets.biolab.si/"
 DATASETS_CACHE_DIR = get_datasets_cache_dir()
 
+# Persistent cache file path
+DATASETS_LIST_CACHE_FILE = DATASETS_CACHE_DIR / "datasets_list_cache.json"
+
 # In-memory cache for datasets list
 _datasets_cache = None
 _datasets_cache_time = None
 DATASETS_CACHE_TTL = 3600  # 1 hour cache
+DATASETS_FETCH_TIMEOUT = 10.0  # 10 second timeout
+
+# Background refresh state
+_refresh_task: Optional[asyncio.Task] = None
+_refresh_in_progress = False
 
 
-async def fetch_datasets_list():
-    """Fetch datasets list from Orange3 server with caching."""
-    global _datasets_cache, _datasets_cache_time
-    
-    # Return cached if available and fresh
-    if _datasets_cache and _datasets_cache_time:
-        if time.time() - _datasets_cache_time < DATASETS_CACHE_TTL:
-            logger.debug("Using cached datasets list")
-            return _datasets_cache
-    
+def _load_file_cache() -> tuple[Optional[list], Optional[float]]:
+    """Load datasets list from persistent file cache."""
     try:
-        import asyncio
+        if DATASETS_LIST_CACHE_FILE.exists():
+            with open(DATASETS_LIST_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("datasets"), data.get("timestamp")
+    except Exception as e:
+        logger.warning(f"Failed to load file cache: {e}")
+    return None, None
+
+
+def _save_file_cache(datasets: list) -> None:
+    """Save datasets list to persistent file cache."""
+    try:
+        DATASETS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(DATASETS_LIST_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"datasets": datasets, "timestamp": time.time()}, f)
+        logger.debug(f"Saved {len(datasets)} datasets to file cache")
+    except Exception as e:
+        logger.warning(f"Failed to save file cache: {e}")
+
+
+async def _do_fetch_from_server() -> Optional[list]:
+    """Actually fetch datasets from the remote Orange3 server."""
+    try:
         from serverfiles import ServerFiles, LocalFiles
-        
+
         logger.info(f"Fetching datasets from {DATASETS_INDEX_URL}...")
-        
-        # Run blocking operation in executor with timeout
+
         def get_server_info():
             client = ServerFiles(server=DATASETS_INDEX_URL)
             return client.allinfo()
-        
+
         loop = asyncio.get_event_loop()
         try:
             allinfo = await asyncio.wait_for(
                 loop.run_in_executor(None, get_server_info),
-                timeout=30.0  # 30 second timeout
+                timeout=DATASETS_FETCH_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            logger.warning("Timeout fetching datasets from server, using fallback")
-            return get_fallback_datasets()
-        
+            logger.warning(f"Timeout ({DATASETS_FETCH_TIMEOUT}s) fetching datasets from server")
+            return None
+
         logger.info(f"Fetched {len(allinfo)} items from server")
-        
-        # Also get local cached files
+
         def get_local_info():
             local = LocalFiles(str(DATASETS_CACHE_DIR))
             return local.allinfo()
-        
+
         local_info = await loop.run_in_executor(None, get_local_info)
-        
+
         datasets = []
         for file_path, info in allinfo.items():
-            prefix = '/'.join(file_path[:-1]) if len(file_path) > 1 else ''
+            prefix = "/".join(file_path[:-1]) if len(file_path) > 1 else ""
             filename = file_path[-1]
-            
-            if not filename.endswith(('.tab', '.csv', '.xlsx', '.pkl')):
+
+            if not filename.endswith((".tab", ".csv", ".xlsx", ".pkl")):
                 continue
-            
+
             islocal = file_path in local_info
-            
-            datasets.append({
-                "id": '/'.join(file_path),
-                "file_path": list(file_path),
-                "prefix": prefix,
-                "filename": filename,
-                "title": info.get('title', filename),
-                "description": info.get('description', ''),
-                "size": info.get('size', 0),
-                "instances": info.get('instances'),
-                "variables": info.get('variables'),
-                "target": info.get('target'),
-                "tags": info.get('tags', []),
-                "source": info.get('source', ''),
-                "year": info.get('year'),
-                "references": info.get('references', []),
-                "seealso": info.get('seealso', []),
-                "language": info.get('language', 'English'),
-                "domain": info.get('domain'),
-                "islocal": islocal,
-                "version": info.get('version', '')
-            })
-        
-        datasets.sort(key=lambda x: x['title'].lower())
-        
-        _datasets_cache = datasets
-        _datasets_cache_time = time.time()
-        
+
+            datasets.append(
+                {
+                    "id": "/".join(file_path),
+                    "file_path": list(file_path),
+                    "prefix": prefix,
+                    "filename": filename,
+                    "title": info.get("title", filename),
+                    "description": info.get("description", ""),
+                    "size": info.get("size", 0),
+                    "instances": info.get("instances"),
+                    "variables": info.get("variables"),
+                    "target": info.get("target"),
+                    "tags": info.get("tags", []),
+                    "source": info.get("source", ""),
+                    "year": info.get("year"),
+                    "references": info.get("references", []),
+                    "seealso": info.get("seealso", []),
+                    "language": info.get("language", "English"),
+                    "domain": info.get("domain"),
+                    "islocal": islocal,
+                    "version": info.get("version", ""),
+                }
+            )
+
+        datasets.sort(key=lambda x: x["title"].lower())
         logger.info(f"Successfully fetched {len(datasets)} datasets")
         return datasets
-        
+
     except Exception as e:
-        logger.error(f"Error fetching datasets: {e}")
+        logger.error(f"Error fetching datasets from server: {e}")
         import traceback
         traceback.print_exc()
-        logger.warning("Using fallback datasets")
-        return get_fallback_datasets()
+        return None
+
+
+async def _background_refresh():
+    """Background task: fetch fresh data and update both in-memory and file caches."""
+    global _datasets_cache, _datasets_cache_time, _refresh_in_progress
+
+    if _refresh_in_progress:
+        return
+    _refresh_in_progress = True
+
+    try:
+        fresh = await _do_fetch_from_server()
+        if fresh is not None:
+            _datasets_cache = fresh
+            _datasets_cache_time = time.time()
+            _save_file_cache(fresh)
+            logger.info("Background refresh: cache updated successfully")
+        else:
+            logger.warning("Background refresh: server unavailable, keeping existing cache")
+    finally:
+        _refresh_in_progress = False
+
+
+async def fetch_datasets_list():
+    """
+    Fetch datasets list with stale-while-revalidate caching strategy:
+
+    1. If fresh in-memory cache  → return immediately
+    2. If stale in-memory cache  → return immediately, trigger background refresh
+    3. If no in-memory cache     → try persistent file cache, trigger background refresh
+    4. If no file cache          → fetch from server synchronously
+    5. If server unavailable     → return fallback datasets
+    """
+    global _datasets_cache, _datasets_cache_time
+
+    now = time.time()
+
+    # 1. Fresh in-memory cache → return immediately
+    if _datasets_cache is not None and _datasets_cache_time is not None:
+        age = now - _datasets_cache_time
+        if age < DATASETS_CACHE_TTL:
+            logger.debug(f"Using fresh in-memory cache (age={age:.0f}s)")
+            return _datasets_cache
+
+        # 2. Stale in-memory cache → return immediately + background refresh
+        logger.debug(f"In-memory cache stale (age={age:.0f}s), serving stale + triggering refresh")
+        asyncio.ensure_future(_background_refresh())
+        return _datasets_cache
+
+    # 3. No in-memory cache → try file cache
+    file_datasets, file_timestamp = _load_file_cache()
+    if file_datasets is not None and file_timestamp is not None:
+        _datasets_cache = file_datasets
+        _datasets_cache_time = file_timestamp
+        age = now - file_timestamp
+        logger.info(f"Loaded {len(file_datasets)} datasets from file cache (age={age:.0f}s)")
+
+        # Trigger background refresh if stale
+        asyncio.ensure_future(_background_refresh())
+        return _datasets_cache
+
+    # 4. No cache at all → fetch synchronously (first run)
+    logger.info("No cache available, fetching from server synchronously...")
+    fresh = await _do_fetch_from_server()
+
+    if fresh is not None:
+        _datasets_cache = fresh
+        _datasets_cache_time = time.time()
+        _save_file_cache(fresh)
+        return _datasets_cache
+
+    # 5. Server unavailable → fallback
+    logger.warning("Server unavailable and no cache, using fallback datasets")
+    return get_fallback_datasets()
 
 
 def get_fallback_datasets():
