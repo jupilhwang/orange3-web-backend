@@ -19,6 +19,38 @@ router = APIRouter(prefix="/evaluate", tags=["Evaluate"])
 
 from app.core.orange_compat import ORANGE_AVAILABLE, Table, Domain, DiscreteVariable
 
+# Orange learners, evaluation samplers, and scoring functions
+HAS_CV_FEATURE = False
+if ORANGE_AVAILABLE:
+    from Orange.modelling import KNNLearner, TreeLearner
+    from Orange.evaluation import (
+        CrossValidation,
+        ShuffleSplit,
+        LeaveOneOut,
+        TestOnTrainingData,
+        TestOnTestData,
+        CA,
+        AUC,
+        F1,
+        Precision,
+        Recall,
+        MAE,
+        MSE,
+        RMSE,
+        R2,
+    )
+    from sklearn.metrics import (
+        matthews_corrcoef,
+        confusion_matrix as sk_confusion_matrix,
+    )
+
+    try:
+        from Orange.evaluation import CrossValidationFeature
+
+        HAS_CV_FEATURE = True
+    except ImportError:
+        HAS_CV_FEATURE = False
+
 # In-memory storage for evaluation results
 _evaluation_cache: Dict[str, Any] = {}
 # Also export as _test_results for confusion_matrix
