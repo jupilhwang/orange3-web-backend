@@ -6,7 +6,6 @@ across multiple modules (health checks, data endpoints, lifespan, etc.).
 """
 
 import logging
-import os
 import threading
 import time
 from pathlib import Path
@@ -36,20 +35,17 @@ def get_server_version() -> str:
 
 SERVER_VERSION = get_server_version()
 
-# Orange3 availability
+# Orange3 availability — single source of truth is orange_compat
+from .orange_compat import ORANGE_AVAILABLE
+
 try:
     from ..orange_adapter import (
         OrangeRegistryAdapter,
         get_availability,
-        ORANGE3_AVAILABLE,
     )
-
-    ORANGE_AVAILABLE = ORANGE3_AVAILABLE
 except ImportError as e:
     logger.warning(f"Could not import Orange3 adapters: {e}")
     logger.info("Using fallback models")
-    ORANGE_AVAILABLE = False
-    ORANGE3_AVAILABLE = False
     OrangeRegistryAdapter = None  # type: ignore[assignment, misc]
 
     def get_availability():  # type: ignore[misc]
