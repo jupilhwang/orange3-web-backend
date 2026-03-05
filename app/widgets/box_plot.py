@@ -6,6 +6,7 @@ Shows distribution of data by category (min, Q1, median, Q3, max, outliers).
 import logging
 from typing import List, Optional
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
@@ -13,14 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Visualize"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    import numpy as np
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE
 
 
 class BoxPlotRequest(BaseModel):
@@ -80,13 +74,12 @@ async def get_box_plot_data(
         raise HTTPException(status_code=503, detail="Orange3 not available")
 
     try:
-        import numpy as np
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.info(
             f"Loading box plot data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(
                 status_code=400, detail=f"Failed to load data: {request.data_path}"

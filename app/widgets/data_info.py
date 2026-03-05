@@ -80,10 +80,10 @@ async def _get_data_info(
     """
     try:
         import numpy as np
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         logger.info(f"Loading data info from: {data_path} (session: {session_id}, preview: {include_preview})")
-        data = load_data(data_path, session_id=session_id)
+        data = await async_load_data(data_path, session_id=session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")

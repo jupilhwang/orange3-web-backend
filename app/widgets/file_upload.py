@@ -11,7 +11,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Header
@@ -81,7 +81,7 @@ async def save_column_metadata(
         metadata_content = {
             "path": data.path,
             "columns": [col.model_dump() for col in data.columns],
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
         with open(metadata_path, "w", encoding="utf-8") as f:
@@ -96,13 +96,7 @@ async def save_column_metadata(
         )
 
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table
 
 
 def _parse_with_orange3(file_path: str, filename: str) -> dict:

@@ -14,13 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    import numpy as np
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE
 
 # Upload directory
 UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
@@ -62,7 +56,7 @@ async def sample_data(
     try:
         import numpy as np
         import math
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         # Constants
         RANDOM_SEED = 42
@@ -70,7 +64,7 @@ async def sample_data(
         
         # Load data using common utility
         logger.info(f"Loading data for sampling from: {request.data_path} (session: {x_session_id})")
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")

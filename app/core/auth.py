@@ -23,10 +23,32 @@ logger = logging.getLogger(__name__)
 # Configuration (overridable via environment variables)
 # ---------------------------------------------------------------------------
 
-JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION_use_openssl_rand_hex_32")
+_jwt_secret_default = "CHANGE_ME_IN_PRODUCTION_use_openssl_rand_hex_32"
+JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", _jwt_secret_default)
+
+# Warn loudly if using the insecure default
+import logging as _logging
+
+_auth_logger = _logging.getLogger(__name__)
+if JWT_SECRET_KEY == _jwt_secret_default:
+    _env = os.getenv("ENVIRONMENT", os.getenv("ENV", "development")).lower()
+    if _env in ("production", "prod"):
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set to a secure random value in production. "
+            "Generate one with: openssl rand -hex 32"
+        )
+    else:
+        _auth_logger.warning(
+            "JWT_SECRET_KEY is using the insecure default. "
+            "Set JWT_SECRET_KEY environment variable before deploying to production."
+        )
 JWT_ALGORITHM: str = "HS256"
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(
+    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30")
+)
+JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = int(
+    os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7")
+)
 JWT_ISSUER: str = os.getenv("JWT_ISSUER", "orange3-web")
 
 # ---------------------------------------------------------------------------

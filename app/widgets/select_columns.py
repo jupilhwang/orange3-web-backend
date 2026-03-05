@@ -14,12 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table, Domain
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table, Domain
 
 # Upload directory
 UPLOAD_DIR = Path("./uploads")
@@ -75,9 +70,9 @@ async def select_columns(
             }
         
         # Load data using common utility
-        from app.core.data_utils import load_data as load_data_util
+        from app.core.data_utils import async_load_data as async_load_data_util
         logger.info(f"Loading Select Columns data from: {data_path} (session: {x_session_id})")
-        original_data = load_data_util(data_path, session_id=x_session_id)
+        original_data = await async_load_data_util(data_path, session_id=x_session_id)
         
         if original_data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {data_path}")

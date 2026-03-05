@@ -150,7 +150,8 @@ class TaskWebSocketManager:
         for websocket in connections_snapshot:
             try:
                 await websocket.send_text(message_text)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Suppressed error: {e}")
                 disconnected.append(websocket)
 
         for ws in disconnected:

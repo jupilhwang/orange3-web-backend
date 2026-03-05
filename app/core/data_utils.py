@@ -21,12 +21,7 @@ UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
 DATASETS_CACHE_DIR = Path(__file__).parent.parent.parent / "datasets_cache"
 
 # Check Orange3 availability
-try:
-    from Orange.data import Table
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table
 
 
 # =============================================================================
@@ -456,6 +451,15 @@ def load_data(data_path: str, session_id: str = None) -> Optional["Table"]:
     except Exception as e:
         logger.error(f"Failed to load data from {data_path}: {e}")
         return None
+
+
+async def async_load_data(data_path: str, session_id: str = None) -> Optional["Table"]:
+    """Async version of load_data that doesn't block the event loop.
+
+    Wraps the synchronous :func:`load_data` with ``asyncio.to_thread``
+    so that CPU-bound / disk-I/O work runs in a separate thread.
+    """
+    return await asyncio.to_thread(load_data, data_path, session_id=session_id)
 
 
 def _load_kmeans_data(data_path: str) -> Optional["Table"]:

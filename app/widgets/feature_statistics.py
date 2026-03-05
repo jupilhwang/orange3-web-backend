@@ -22,6 +22,7 @@ router = APIRouter(prefix="/data/feature-statistics", tags=["Feature Statistics"
 
 class FeatureStatisticsRequest(BaseModel):
     """Feature Statistics 요청 모델"""
+
     data_path: str
     color_var: Optional[str] = None  # 분포 색상 변수
     selected_indices: Optional[List[int]] = None  # 선택된 행 인덱스
@@ -29,6 +30,7 @@ class FeatureStatisticsRequest(BaseModel):
 
 class ColumnStatistics(BaseModel):
     """컬럼별 통계 모델"""
+
     index: int
     name: str
     type: str  # 'continuous', 'discrete', 'time', 'string'
@@ -46,6 +48,7 @@ class ColumnStatistics(BaseModel):
 
 class FeatureStatisticsResponse(BaseModel):
     """Feature Statistics 응답 모델"""
+
     success: bool
     n_instances: int
     n_features: int
@@ -57,12 +60,14 @@ class FeatureStatisticsResponse(BaseModel):
 
 class ReducedDataRequest(BaseModel):
     """Reduced Data 요청 모델"""
+
     data_path: str
     selected_columns: List[str]
 
 
 class ReducedDataResponse(BaseModel):
     """Reduced Data 응답 모델"""
+
     success: bool
     data_path: str  # 결과 데이터 경로
     n_instances: int
@@ -72,44 +77,49 @@ class ReducedDataResponse(BaseModel):
 
 def _get_variable_type(var) -> str:
     """변수 타입을 문자열로 반환"""
-    from Orange.data import ContinuousVariable, DiscreteVariable, TimeVariable, StringVariable
-    
+    from Orange.data import (
+        ContinuousVariable,
+        DiscreteVariable,
+        TimeVariable,
+        StringVariable,
+    )
+
     if isinstance(var, TimeVariable):
-        return 'time'
+        return "time"
     elif isinstance(var, ContinuousVariable):
-        return 'continuous'
+        return "continuous"
     elif isinstance(var, DiscreteVariable):
-        return 'discrete'
+        return "discrete"
     elif isinstance(var, StringVariable):
-        return 'string'
-    return 'unknown'
+        return "string"
+    return "unknown"
 
 
 def _get_variable_role(var, domain) -> str:
     """변수 역할을 문자열로 반환"""
     if var in domain.attributes:
-        return 'attribute'
+        return "attribute"
     elif var in domain.class_vars:
-        return 'class'
+        return "class"
     elif var in domain.metas:
-        return 'meta'
-    return 'unknown'
+        return "meta"
+    return "unknown"
 
 
 def _compute_dispersion(x: np.ndarray, var_type: str) -> Optional[float]:
     """분산 계산 - 연속형: coefficient of variation, 범주형: entropy"""
     import scipy.stats as ss
-    
-    if var_type == 'continuous':
+
+    if var_type == "continuous":
         # Coefficient of variation
         valid = x[~np.isnan(x)]
         if len(valid) == 0:
             return None
         mean = np.mean(valid)
         if np.isclose(mean, 0, atol=1e-12):
-            return float('inf') if np.std(valid) > 0 else 0.0
+            return float("inf") if np.std(valid) > 0 else 0.0
         return float(np.std(valid) / abs(mean))
-    elif var_type == 'discrete':
+    elif var_type == "discrete":
         # Entropy
         valid = x[~np.isnan(x)].astype(int)
         if len(valid) == 0:
@@ -123,75 +133,85 @@ def _compute_dispersion(x: np.ndarray, var_type: str) -> Optional[float]:
 
 def _get_palette_colors(color_var, count: int) -> Optional[list]:
     """QColor palette에서 hex 색상 추출"""
-    if not hasattr(color_var, 'palette') or color_var.palette is None:
+    if not hasattr(color_var, "palette") or color_var.palette is None:
         return None
-    
+
     colors = []
     try:
         palette = color_var.palette
         for i in range(min(count, len(palette))):
             c = palette[i]
             # QColor 객체인 경우 RGB 값 추출
-            if hasattr(c, 'red') and hasattr(c, 'green') and hasattr(c, 'blue'):
+            if hasattr(c, "red") and hasattr(c, "green") and hasattr(c, "blue"):
                 # QColor
-                colors.append(f'#{c.red():02x}{c.green():02x}{c.blue():02x}')
-            elif hasattr(c, '__iter__') and len(c) >= 3:
+                colors.append(f"#{c.red():02x}{c.green():02x}{c.blue():02x}")
+            elif hasattr(c, "__iter__") and len(c) >= 3:
                 # tuple/list (r, g, b)
-                colors.append(f'#{int(c[0]):02x}{int(c[1]):02x}{int(c[2]):02x}')
+                colors.append(f"#{int(c[0]):02x}{int(c[1]):02x}{int(c[2]):02x}")
             elif isinstance(c, int):
                 # integer color
-                colors.append(f'#{c:06x}')
+                colors.append(f"#{c:06x}")
             else:
                 # 기본 색상
-                default_colors = ['#1a9641', '#a6d96a', '#ffffbf', '#fdae61', '#d7191c']
+                default_colors = ["#1a9641", "#a6d96a", "#ffffbf", "#fdae61", "#d7191c"]
                 colors.append(default_colors[i % len(default_colors)])
-    except Exception:
+    except Exception as e:  # noqa: F841
         return None
-    
+
     return colors if colors else None
 
 
-def _compute_distribution(x: np.ndarray, var, var_type: str, color_data=None, color_var=None) -> Optional[dict]:
+def _compute_distribution(
+    x: np.ndarray, var, var_type: str, color_data=None, color_var=None
+) -> Optional[dict]:
     """분포 히스토그램 데이터 계산"""
     from Orange.data import DiscreteVariable
-    
-    valid_mask = ~np.isnan(x) if np.issubdtype(x.dtype, np.number) else np.array([True] * len(x))
+
+    valid_mask = (
+        ~np.isnan(x) if np.issubdtype(x.dtype, np.number) else np.array([True] * len(x))
+    )
     valid = x[valid_mask]
-    
+
     if len(valid) == 0:
         return None
-    
-    if var_type == 'discrete':
+
+    if var_type == "discrete":
         # 범주형: 각 값별 카운트
         counts = np.bincount(valid.astype(int), minlength=len(var.values))
-        
+
         # 색상 변수가 있는 경우 분리
-        if color_data is not None and color_var is not None and isinstance(color_var, DiscreteVariable):
+        if (
+            color_data is not None
+            and color_var is not None
+            and isinstance(color_var, DiscreteVariable)
+        ):
             color_valid = color_data[valid_mask]
             stacked = []
             for c_idx in range(len(color_var.values)):
                 c_mask = color_valid == c_idx
-                c_counts = np.bincount(valid[c_mask].astype(int), minlength=len(var.values))
+                c_counts = np.bincount(
+                    valid[c_mask].astype(int), minlength=len(var.values)
+                )
                 stacked.append(c_counts.tolist())
             return {
-                'type': 'bar',
-                'labels': list(var.values),
-                'stacked': stacked,
-                'colors': _get_palette_colors(color_var, len(color_var.values))
+                "type": "bar",
+                "labels": list(var.values),
+                "stacked": stacked,
+                "colors": _get_palette_colors(color_var, len(color_var.values)),
             }
-        
-        return {
-            'type': 'bar',
-            'labels': list(var.values),
-            'counts': counts.tolist()
-        }
-    elif var_type in ('continuous', 'time'):
+
+        return {"type": "bar", "labels": list(var.values), "counts": counts.tolist()}
+    elif var_type in ("continuous", "time"):
         # 연속형: 히스토그램
         try:
-            hist, bin_edges = np.histogram(valid, bins='auto')
-            
+            hist, bin_edges = np.histogram(valid, bins="auto")
+
             # 색상 변수가 있는 경우
-            if color_data is not None and color_var is not None and isinstance(color_var, DiscreteVariable):
+            if (
+                color_data is not None
+                and color_var is not None
+                and isinstance(color_var, DiscreteVariable)
+            ):
                 color_valid = color_data[valid_mask]
                 stacked = []
                 for c_idx in range(len(color_var.values)):
@@ -199,30 +219,29 @@ def _compute_distribution(x: np.ndarray, var, var_type: str, color_data=None, co
                     c_hist, _ = np.histogram(valid[c_mask], bins=bin_edges)
                     stacked.append(c_hist.tolist())
                 return {
-                    'type': 'histogram',
-                    'bins': bin_edges.tolist(),
-                    'stacked': stacked,
-                    'colors': _get_palette_colors(color_var, len(color_var.values))
+                    "type": "histogram",
+                    "bins": bin_edges.tolist(),
+                    "stacked": stacked,
+                    "colors": _get_palette_colors(color_var, len(color_var.values)),
                 }
-            
+
             return {
-                'type': 'histogram',
-                'bins': bin_edges.tolist(),
-                'counts': hist.tolist()
+                "type": "histogram",
+                "bins": bin_edges.tolist(),
+                "counts": hist.tolist(),
             }
-        except Exception:
+        except Exception as e:  # noqa: F841
             return None
     return None
 
 
 @router.post("/compute", response_model=FeatureStatisticsResponse)
 async def compute_feature_statistics(
-    request: FeatureStatisticsRequest,
-    x_session_id: Optional[str] = Header(None)
+    request: FeatureStatisticsRequest, x_session_id: Optional[str] = Header(None)
 ):
     """
     피처 통계 계산
-    
+
     각 피처(변수)에 대해 다음 통계를 계산합니다:
     - Mean (평균) - 연속형만
     - Mode (최빈값)
@@ -234,22 +253,22 @@ async def compute_feature_statistics(
     """
     try:
         from Orange.data import Table, StringVariable
-        from app.core.data_utils import load_data
-        
+        from app.core.data_utils import async_load_data
+
         # 데이터 로드
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             return FeatureStatisticsResponse(
                 success=False,
                 n_instances=0,
                 n_features=0,
                 columns=[],
-                error="Data not found"
+                error="Data not found",
             )
-        
+
         n_instances = len(data)
         domain = data.domain
-        
+
         # Color 변수 찾기
         color_var = None
         color_data = None
@@ -262,30 +281,30 @@ async def compute_feature_statistics(
                 elif col_idx < len(domain.attributes) + len(domain.class_vars):
                     y_idx = col_idx - len(domain.attributes)
                     color_data = data.Y if data.Y.ndim == 1 else data.Y[:, y_idx]
-            except Exception:
+            except Exception as e:  # noqa: F841
                 color_var = None
-        
+
         # 모든 변수 수집 (StringVariable 제외)
         all_vars = []
         for var in domain.attributes:
             if not isinstance(var, StringVariable):
-                all_vars.append((var, 'attribute'))
+                all_vars.append((var, "attribute"))
         for var in domain.class_vars:
             if not isinstance(var, StringVariable):
-                all_vars.append((var, 'class'))
+                all_vars.append((var, "class"))
         for var in domain.metas:
             if not isinstance(var, StringVariable):
-                all_vars.append((var, 'meta'))
-        
+                all_vars.append((var, "meta"))
+
         columns = []
         for idx, (var, role) in enumerate(all_vars):
             var_type = _get_variable_type(var)
-            
+
             # 데이터 추출
-            if role == 'attribute':
+            if role == "attribute":
                 col_idx = list(domain.attributes).index(var)
                 x = data.X[:, col_idx]
-            elif role == 'class':
+            elif role == "class":
                 if data.Y.ndim == 1:
                     x = data.Y
                 else:
@@ -294,30 +313,34 @@ async def compute_feature_statistics(
             else:  # meta
                 col_idx = list(domain.metas).index(var)
                 x = data.metas[:, col_idx]
-            
+
             # 숫자형으로 변환
             if not np.issubdtype(x.dtype, np.number):
                 try:
                     x = x.astype(np.float64)
                 except (ValueError, TypeError):
                     # 변환 불가능한 경우
-                    columns.append(ColumnStatistics(
-                        index=idx,
-                        name=var.name,
-                        type=var_type,
-                        role=role,
-                        missing=n_instances,
-                        missing_percent=100.0
-                    ))
+                    columns.append(
+                        ColumnStatistics(
+                            index=idx,
+                            name=var.name,
+                            type=var_type,
+                            role=role,
+                            missing=n_instances,
+                            missing_percent=100.0,
+                        )
+                    )
                     continue
-            
+
             # 결측치 계산
             missing = int(np.isnan(x).sum())
-            missing_percent = round(100 * missing / n_instances, 1) if n_instances > 0 else 0.0
-            
+            missing_percent = (
+                round(100 * missing / n_instances, 1) if n_instances > 0 else 0.0
+            )
+
             # 유효 데이터
             valid = x[~np.isnan(x)]
-            
+
             # 통계 계산
             col_stats = ColumnStatistics(
                 index=idx,
@@ -325,95 +348,108 @@ async def compute_feature_statistics(
                 type=var_type,
                 role=role,
                 missing=missing,
-                missing_percent=missing_percent
+                missing_percent=missing_percent,
             )
-            
+
             if len(valid) > 0:
                 # Mean (연속형만)
-                if var_type in ('continuous', 'time'):
+                if var_type in ("continuous", "time"):
                     col_stats.mean = float(np.mean(valid))
-                
+
                 # Mode
                 try:
                     from scipy import stats
+
                     mode_result = stats.mode(valid, keepdims=False)
                     mode_val = mode_result.mode
-                    if var_type == 'discrete' and hasattr(var, 'values'):
-                        col_stats.mode = var.values[int(mode_val)] if int(mode_val) < len(var.values) else str(mode_val)
+                    if var_type == "discrete" and hasattr(var, "values"):
+                        col_stats.mode = (
+                            var.values[int(mode_val)]
+                            if int(mode_val) < len(var.values)
+                            else str(mode_val)
+                        )
                     else:
-                        col_stats.mode = float(mode_val) if np.isfinite(mode_val) else None
-                except Exception:
+                        col_stats.mode = (
+                            float(mode_val) if np.isfinite(mode_val) else None
+                        )
+                except Exception as e:  # noqa: F841
                     pass
-                
+
                 # Median (연속형만)
-                if var_type in ('continuous', 'time'):
+                if var_type in ("continuous", "time"):
                     col_stats.median = float(np.median(valid))
-                
+
                 # Dispersion
                 col_stats.dispersion = _compute_dispersion(x, var_type)
-                
+
                 # Min/Max
-                if var_type == 'discrete' and hasattr(var, 'values'):
-                    col_stats.min = var.values[int(np.min(valid))] if int(np.min(valid)) < len(var.values) else None
-                    col_stats.max = var.values[int(np.max(valid))] if int(np.max(valid)) < len(var.values) else None
-                elif var_type != 'string':
+                if var_type == "discrete" and hasattr(var, "values"):
+                    col_stats.min = (
+                        var.values[int(np.min(valid))]
+                        if int(np.min(valid)) < len(var.values)
+                        else None
+                    )
+                    col_stats.max = (
+                        var.values[int(np.max(valid))]
+                        if int(np.max(valid)) < len(var.values)
+                        else None
+                    )
+                elif var_type != "string":
                     col_stats.min = float(np.min(valid))
                     col_stats.max = float(np.max(valid))
-                
+
                 # Distribution
-                col_stats.distribution = _compute_distribution(x, var, var_type, color_data, color_var)
-            
+                col_stats.distribution = _compute_distribution(
+                    x, var, var_type, color_data, color_var
+                )
+
             columns.append(col_stats)
-        
+
         # Color 변수 정보
         color_values = None
-        if color_var is not None and hasattr(color_var, 'values'):
+        if color_var is not None and hasattr(color_var, "values"):
             color_values = list(color_var.values)
-        
+
         return FeatureStatisticsResponse(
             success=True,
             n_instances=n_instances,
             n_features=len(columns),
             columns=columns,
             color_var=request.color_var,
-            color_values=color_values
+            color_values=color_values,
         )
-        
+
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         return FeatureStatisticsResponse(
-            success=False,
-            n_instances=0,
-            n_features=0,
-            columns=[],
-            error=str(e)
+            success=False, n_instances=0, n_features=0, columns=[], error=str(e)
         )
 
 
 @router.post("/reduced-data", response_model=ReducedDataResponse)
 async def get_reduced_data(
-    request: ReducedDataRequest,
-    x_session_id: Optional[str] = Header(None)
+    request: ReducedDataRequest, x_session_id: Optional[str] = Header(None)
 ):
     """
     선택된 컬럼만 포함된 데이터 반환
     """
     try:
         from Orange.data import Table
-        from app.core.data_utils import load_data, DataSessionManager
-        
+        from app.core.data_utils import async_load_data, DataSessionManager
+
         # 데이터 로드
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             return ReducedDataResponse(
                 success=False,
                 data_path="",
                 n_instances=0,
                 n_features=0,
-                error="Data not found"
+                error="Data not found",
             )
-        
+
         # 선택된 컬럼으로 필터링
         domain = data.domain
         selected_vars = []
@@ -421,44 +457,42 @@ async def get_reduced_data(
             try:
                 var = domain[col_name]
                 selected_vars.append(var)
-            except Exception:
+            except Exception as e:  # noqa: F841
                 pass
-        
+
         if not selected_vars:
             return ReducedDataResponse(
                 success=False,
                 data_path="",
                 n_instances=0,
                 n_features=0,
-                error="No valid columns selected"
+                error="No valid columns selected",
             )
-        
+
         # Reduced data 생성
         reduced_data = data[:, selected_vars]
-        
+
         # 세션에 저장
         import uuid
+
         result_id = f"feature_stats_{uuid.uuid4().hex[:8]}"
         result_path = f"feature_stats/{result_id}"
         session_id = x_session_id or "default"
         await DataSessionManager.store(session_id, result_path, reduced_data)
-        
+
         return ReducedDataResponse(
             success=True,
             data_path=result_path,
             n_instances=len(reduced_data),
-            n_features=len(selected_vars)
+            n_features=len(selected_vars),
         )
-        
+
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         return ReducedDataResponse(
-            success=False,
-            data_path="",
-            n_instances=0,
-            n_features=0,
-            error=str(e)
+            success=False, data_path="", n_instances=0, n_features=0, error=str(e)
         )
 
 
@@ -476,7 +510,6 @@ async def get_options():
             {"id": "dispersion", "name": "Dispersion", "sortable": True},
             {"id": "min", "name": "Min.", "sortable": True},
             {"id": "max", "name": "Max.", "sortable": True},
-            {"id": "missing", "name": "Missing", "sortable": True}
+            {"id": "missing", "name": "Missing", "sortable": True},
         ]
     }
-

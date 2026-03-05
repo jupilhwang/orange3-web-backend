@@ -11,52 +11,13 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
-from app.core.data_utils import load_data
+from app.core.data_utils import async_load_data
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/evaluate", tags=["Evaluate"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table, Domain, DiscreteVariable
-    from Orange.evaluation import (
-        CrossValidation,
-        ShuffleSplit,
-        LeaveOneOut,
-        TestOnTrainingData,
-        TestOnTestData,
-        Results,
-    )
-    from Orange.evaluation.scoring import (
-        CA,
-        AUC,
-        F1,
-        Precision,
-        Recall,
-        MAE,
-        MSE,
-        RMSE,
-        R2,
-    )
-
-    # Try to import CrossValidationFeature (if available in Orange3)
-    try:
-        from Orange.evaluation import CrossValidationFeature
-
-        HAS_CV_FEATURE = True
-    except ImportError:
-        HAS_CV_FEATURE = False
-    from Orange.modelling import KNNLearner, TreeLearner
-    import numpy as np
-    from sklearn.metrics import (
-        matthews_corrcoef,
-        confusion_matrix as sk_confusion_matrix,
-    )
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table, Domain, DiscreteVariable
 
 # In-memory storage for evaluation results
 _evaluation_cache: Dict[str, Any] = {}
@@ -196,12 +157,12 @@ async def evaluate_models(
 
     try:
         # Load data using common utility
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.info(
             f"Loading Test and Score data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
 
         if data is None:
             raise HTTPException(
@@ -287,7 +248,9 @@ async def evaluate_models(
                 return EvaluateResponse(
                     success=False, error="Test data path required for test_on_test"
                 )
-            test_data = load_data(request.test_data_path, session_id=x_session_id)
+            test_data = await async_load_data(
+                request.test_data_path, session_id=x_session_id
+            )
             if test_data is None:
                 return EvaluateResponse(
                     success=False,
@@ -322,6 +285,8 @@ async def evaluate_models(
         else:
             # Regression scores
             score_funcs = [("MAE", MAE), ("MSE", MSE), ("RMSE", RMSE), ("R2", R2)]
+
+        import numpy as np
 
         for learner_idx, learner_name in enumerate(learner_names):
             learner_scores = {"name": learner_name}

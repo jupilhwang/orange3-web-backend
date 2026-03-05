@@ -14,13 +14,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model", tags=["Model"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
+from app.core.orange_compat import ORANGE_AVAILABLE
+
+if ORANGE_AVAILABLE:
     from Orange.classification.naive_bayes import NaiveBayesLearner
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
 
 # Model storage
 _nb_models: Dict[str, Any] = {}
@@ -29,11 +26,13 @@ _nb_learners: Dict[str, Any] = {}
 
 class NaiveBayesTrainRequest(BaseModel):
     """Request model for Naive Bayes training."""
+
     data_path: str
 
 
 class NaiveBayesTrainResponse(BaseModel):
     """Response model for Naive Bayes training."""
+
     success: bool
     model_id: Optional[str] = None
     message: Optional[str] = None
@@ -44,55 +43,56 @@ class NaiveBayesTrainResponse(BaseModel):
 @router.get("/naive-bayes/options")
 async def get_naive_bayes_options():
     """Get Naive Bayes learner options (minimal - no hyperparameters)."""
-    return {
-        "description": "Naive Bayes classifier - no hyperparameters required"
-    }
+    return {"description": "Naive Bayes classifier - no hyperparameters required"}
 
 
 @router.post("/naive-bayes/train", response_model=NaiveBayesTrainResponse)
 async def train_naive_bayes(
-    request: NaiveBayesTrainRequest,
-    x_session_id: Optional[str] = Header(None)
+    request: NaiveBayesTrainRequest, x_session_id: Optional[str] = Header(None)
 ):
     """Train a Naive Bayes model."""
     if not ORANGE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Orange3 not available")
-    
+
     try:
         # Load data using common utility
-        from app.core.data_utils import load_data
-        logger.info(f"Loading Naive Bayes data from: {request.data_path} (session: {x_session_id})")
-        data = load_data(request.data_path, session_id=x_session_id)
-        
+        from app.core.data_utils import async_load_data
+
+        logger.info(
+            f"Loading Naive Bayes data from: {request.data_path} (session: {x_session_id})"
+        )
+        data = await async_load_data(request.data_path, session_id=x_session_id)
+
         if data is None:
-            raise HTTPException(status_code=404, detail=f"Data not found: {request.data_path}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Data not found: {request.data_path}"
+            )
+
         if data is None or len(data) == 0:
             return NaiveBayesTrainResponse(
-                success=False,
-                error="Dataset is empty or could not be loaded"
+                success=False, error="Dataset is empty or could not be loaded"
             )
-        
+
         if data.domain.class_var is None:
             return NaiveBayesTrainResponse(
                 success=False,
                 error="Data has no target variable.",
-                error_type="no_target"
+                error_type="no_target",
             )
-        
+
         if data.domain.class_var.is_continuous:
             return NaiveBayesTrainResponse(
                 success=False,
                 error="Categorical target variable expected.",
-                error_type="target_type"
+                error_type="target_type",
             )
-        
+
         # Create Naive Bayes learner
         learner = NaiveBayesLearner()
-        
+
         # Train model
         model = learner(data)
-        
+
         # Store model
         model_id = str(uuid.uuid4())[:8]
         _nb_models[model_id] = model
@@ -102,15 +102,17 @@ async def train_naive_bayes(
             "training_instances": len(data),
             "features": len(data.domain.attributes),
             "target": data.domain.class_var.name,
-            "target_values": list(data.domain.class_var.values) if hasattr(data.domain.class_var, 'values') else None,
+            "target_values": list(data.domain.class_var.values)
+            if hasattr(data.domain.class_var, "values")
+            else None,
         }
-        
+
         return NaiveBayesTrainResponse(
             success=True,
             model_id=model_id,
-            message=f"Naive Bayes model trained successfully on {len(data)} instances"
+            message=f"Naive Bayes model trained successfully on {len(data)} instances",
         )
-        
+
     except Exception as e:
         logger.error(f"Naive Bayes training error: {e}")
         return NaiveBayesTrainResponse(success=False, error=str(e))
@@ -121,9 +123,9 @@ async def get_naive_bayes_info(model_id: str):
     """Get Naive Bayes model information."""
     if model_id not in _nb_learners:
         raise HTTPException(status_code=404, detail="Model not found")
-    
+
     model_data = _nb_learners[model_id]
-    
+
     return {
         "success": True,
         "model_id": model_id,
@@ -140,10 +142,9 @@ async def delete_naive_bayes_model(model_id: str):
     """Delete a Naive Bayes model."""
     if model_id not in _nb_models:
         raise HTTPException(status_code=404, detail="Model not found")
-    
+
     del _nb_models[model_id]
     if model_id in _nb_learners:
         del _nb_learners[model_id]
-    
-    return {"success": True, "message": "Model deleted"}
 
+    return {"success": True, "message": "Model deleted"}

@@ -10,197 +10,30 @@ Features:
 - Multi-tenant support via X-Tenant-ID header
 """
 
-from fastapi import (
-    FastAPI,
-    WebSocket,
-    WebSocketDisconnect,
-    Depends,
-    HTTPException,
-    APIRouter,
-    UploadFile,
-    File,
-    Header,
-    Request,
-)
+import logging
+import os
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-import asyncio
-import ipaddress
-import os
-import logging
-import threading
-from urllib.parse import urlparse
-from pathlib import Path
-from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, List, Optional, Any
-import json
-import uuid
-import time
-from pydantic import BaseModel
 
+# Rate limiting — shared limiter for widget/auth routers
+from .core.rate_limit import limiter
 
-# ============================================================================
-# Rate Limiting
-# ============================================================================
+# Shared globals
+from .core.globals import SERVER_VERSION
 
-# Import the shared limiter so that widget/auth routers can reuse it without
-# a circular import.  Limits are configurable via environment variables — see
-# app/core/rate_limit.py for details.
-from .core.rate_limit import limiter, LIMIT_UPLOAD
+# Lifespan
+from .core.lifespan import lifespan
 
-# Server startup timestamp - used to detect server restarts
-SERVER_START_TIME = int(time.time())
+# Middleware
+from .middleware.proxy import setup_proxy_middleware
 
-
-# Server version - read from VERSION file
-def get_server_version() -> str:
-    """Read server version from VERSION file."""
-    version_paths = [
-        Path(__file__).parent.parent.parent / "VERSION",  # backend/../VERSION
-        Path(__file__).parent.parent / "VERSION",  # backend/VERSION
-        Path("VERSION"),  # current directory
-    ]
-    for path in version_paths:
-        if path.exists():
-            try:
-                return path.read_text().strip()
-            except Exception:
-                pass
-    return "unknown"
-
-
-SERVER_VERSION = get_server_version()
-
-
-async def validate_url_for_ssrf(url: str) -> tuple[bool, str]:
-    """
-    Validate URL to prevent SSRF attacks.
-
-    Returns:
-        (is_valid, error_message)
-    """
-    try:
-        parsed = urlparse(url)
-
-        # Must have scheme
-        if not parsed.scheme:
-            return False, "URL must have a scheme (http/https)"
-
-        # Only allow http/https
-        if parsed.scheme not in ("http", "https"):
-            return False, f"Scheme '{parsed.scheme}' not allowed. Only http/https."
-
-        # Must have hostname
-        if not parsed.hostname:
-            return False, "URL must have a hostname"
-
-        # Block common cloud metadata endpoints
-        blocked_hostnames = [
-            "169.254.169.254",  # AWS/Azure/GCP metadata
-            "metadata.google.internal",
-            "metadata",
-        ]
-        if parsed.hostname.lower() in blocked_hostnames:
-            return False, f"Blocked hostname: {parsed.hostname}"
-
-        # Block private/loopback IPs
-        try:
-            ip = ipaddress.ip_address(parsed.hostname)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
-                return (
-                    False,
-                    f"Private/internal IP addresses not allowed: {parsed.hostname}",
-                )
-        except ValueError:
-            # Not an IP, it's a hostname - resolve and check without blocking the event loop
-            import socket
-
-            try:
-                resolved_ip = await asyncio.to_thread(
-                    socket.gethostbyname, parsed.hostname
-                )
-                ip = ipaddress.ip_address(resolved_ip)
-                if ip.is_private or ip.is_loopback or ip.is_link_local:
-                    return False, f"Hostname resolves to private IP: {resolved_ip}"
-            except socket.gaierror:
-                return False, f"Cannot resolve hostname: {parsed.hostname}"
-
-        return True, ""
-
-    except Exception as e:
-        return False, f"Invalid URL: {str(e)}"
-
-
-# Setup logging
-logger = logging.getLogger(__name__)
-
-# Database and locks (from core/)
-from .core import init_db, close_db, get_db, async_session_maker
-from sqlalchemy.ext.asyncio import AsyncSession
-
-# Import adapters that wrap existing Orange3 code
-try:
-    from .orange_adapter import (
-        OrangeSchemeAdapter,
-        OrangeRegistryAdapter,
-        get_availability,
-        ORANGE3_AVAILABLE,
-    )
-
-    ORANGE_AVAILABLE = ORANGE3_AVAILABLE
-except ImportError as e:
-    logger.warning(f"Could not import Orange3 adapters: {e}")
-    logger.info("Using fallback models")
-    ORANGE_AVAILABLE = False
-    ORANGE3_AVAILABLE = False
-
-    def get_availability():
-        return {"orange3": False}
-
-
-from .core.models import (
-    Workflow,
-    WorkflowSummary,
-    WorkflowCreate,
-    WorkflowUpdate,
-    WorkflowNode,
-    NodeCreate,
-    NodeUpdate,
-    NodeState,
-    WorkflowLink,
-    LinkCreate,
-    LinkUpdate,
-    TextAnnotation,
-    ArrowAnnotation,
-    AnnotationCreate,
-    WidgetDescription,
-    WidgetCategory,
-    Position,
-    Rect,
-    Tenant,
-)
-
-# Managers
-from .core import TenantManager, get_current_tenant
-from .websocket_manager import TaskWebSocketManager, task_ws_manager
-from .workflow_manager import WorkflowManager
-
-# Module-level WorkflowManager instance (initialized during startup)
-_global_workflow_manager: Optional[WorkflowManager] = None
-
-# OpenTelemetry
-try:
-    from .core.telemetry import init_telemetry, get_telemetry, TelemetryConfig
-
-    OTEL_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"OpenTelemetry not available: {e}")
-    OTEL_AVAILABLE = False
-    init_telemetry = None
-    get_telemetry = None
+# API routers (extracted)
+from .api.health import health_router
+from .api.data import data_router
 
 # Widget API routers
 from .widgets import (
@@ -236,285 +69,15 @@ from .widgets import (
     feature_statistics_router,
 )
 from .core.task_api import router as task_api_router
-from .core.config import get_upload_dir, get_config
-from .core.mock_data import get_mock_data_info
 from .routes import (
     workflow_router,
     widget_registry_router,
     websocket_endpoint as workflow_ws_endpoint,
-    get_workflow_adapters,
     legacy_widgets_handler,
-    set_registry_getter,
-    set_registry_getter as set_widget_registry_getter,
-    set_websocket_manager,
-    set_workflow_manager,
 )
+from .websocket_manager import task_ws_manager
 
-# mDNS Service Discovery
-from .mdns import (
-    MDNSService,
-    MDNSConfig as MDNSServiceConfig,
-    is_mdns_available,
-    set_mdns_service,
-)
-
-
-# ============================================================================
-# Managers (Thread-safe singletons)
-# ============================================================================
-
-tenant_manager = TenantManager()
-# Task WebSocket 매니저는 websocket_manager.py에서 전역 인스턴스 사용
-
-# Widget registry (singleton, read-only after initialization)
-_registry: Optional[Any] = None
-_registry_initialized = False
-_registry_lock = threading.Lock()
-
-# WorkflowManager singleton (initialized in lifespan after registry is ready)
-workflow_manager: Optional[WorkflowManager] = None
-
-
-def get_registry() -> Optional[Any]:
-    """Get or create the widget registry (thread-safe singleton)."""
-    global _registry, _registry_initialized
-    if _registry_initialized:
-        return _registry
-    with _registry_lock:
-        if not _registry_initialized:  # double-check after acquiring lock
-            if ORANGE_AVAILABLE:
-                _registry = OrangeRegistryAdapter()
-                _registry.discover_widgets()
-            else:
-                _registry = None
-            _registry_initialized = True
-    return _registry
-
-
-# ============================================================================
-# Lifespan helpers
-# ============================================================================
-
-
-def _init_telemetry(fastapi_app: FastAPI) -> None:
-    """Initialize OpenTelemetry if available and enabled."""
-    if not (OTEL_AVAILABLE and init_telemetry):
-        return
-
-    # Config file takes priority over environment variables
-    app_config = get_config()
-    otel_enabled = app_config.otel.enabled
-    otel_endpoint = app_config.otel.endpoint or os.getenv("OTEL_ENDPOINT")
-
-    logger.info(
-        f"[OTel] Config loaded — enabled={otel_enabled}, "
-        f"endpoint={repr(otel_endpoint)}, "
-        f"source={'file' if app_config.otel.endpoint else 'env/default'}"
-    )
-
-    if otel_enabled:
-        config = TelemetryConfig(
-            service_name=app_config.otel.service_name,
-            service_version=app_config.otel.service_version,
-            environment=app_config.otel.environment,
-            otel_endpoint=otel_endpoint,
-            enable_console=app_config.otel.enable_console,
-            log_level=app_config.log.level,
-            metric_interval_ms=app_config.otel.metric_interval_ms,
-        )
-        init_telemetry(fastapi_app, config)
-        logger.info(
-            f"OpenTelemetry initialized (endpoint: {config.get_otlp_endpoint() or 'none'})"
-        )
-
-
-async def _init_database() -> None:
-    """Initialize database tables."""
-    logger.info("Initializing database...")
-    await init_db()
-    logger.info("Database ready (SQLite with WAL mode)")
-
-
-def _init_registry() -> None:
-    """Pre-load widget registry and wire up router dependencies."""
-    global workflow_manager
-
-    availability = get_availability()
-    logger.info(
-        f"Orange3: {'Available' if availability.get('orange3') else 'Not available'}"
-    )
-
-    if not availability.get("orange3"):
-        logger.info("Install with: pip install Orange3")
-
-    registry = get_registry()
-    if registry:
-        categories = registry.list_categories()
-        widgets = registry.list_widgets()
-        logger.info(
-            f"Discovered {len(widgets)} widgets in {len(categories)} categories"
-        )
-
-    set_registry_getter(get_registry)
-    set_widget_registry_getter(get_registry)
-
-    # Initialize WorkflowManager with the registry so link type-compatibility
-    # checks use discovered widget channel types.
-    global _global_workflow_manager
-    _global_workflow_manager = WorkflowManager(registry=registry)
-    logger.info(
-        "WorkflowManager initialized"
-        + (
-            " with registry"
-            if registry
-            else " (no registry — permissive link validation)"
-        )
-    )
-
-
-async def _init_task_worker() -> bool:
-    """Start background task worker if enabled. Returns whether worker was started."""
-    task_worker_enabled = os.getenv("TASK_WORKER_ENABLED", "true").lower() == "true"
-    if not task_worker_enabled:
-        return False
-
-    from .core.task_queue import (
-        start_worker,
-        cleanup_stale_tasks,
-        set_progress_callback,
-        set_completion_callback,
-    )
-
-    # Import tasks to register them
-    import app.tasks  # noqa: F401
-
-    # Wire WebSocket callbacks for task progress/completion
-    async def on_progress(task_id: str, progress: float, message: str = None) -> None:
-        from .core.task_queue import get_task_status
-
-        task_info = await get_task_status(task_id)
-        if task_info:
-            await task_ws_manager.send_progress(
-                task_id, task_info["tenant_id"], progress, message
-            )
-
-    async def on_completion(
-        task_id: str, status: str, result: Any = None, error: str = None
-    ) -> None:
-        from .core.task_queue import get_task_status
-
-        task_info = await get_task_status(task_id)
-        if task_info:
-            await task_ws_manager.send_completion(
-                task_id, task_info["tenant_id"], status, result, error
-            )
-
-    set_progress_callback(on_progress)
-    set_completion_callback(on_completion)
-
-    await start_worker(poll_interval=1.0)
-    await cleanup_stale_tasks(timeout_minutes=30)
-    logger.info("Task Queue worker started (WebSocket notifications enabled)")
-    return True
-
-
-async def _init_mdns(app_config) -> Optional[Any]:
-    """Register mDNS service for discovery if configured. Returns mdns_service or None."""
-    mdns_config = app_config.mdns
-
-    if not mdns_config.enabled:
-        logger.info("mDNS disabled in configuration")
-        return None
-
-    if not is_mdns_available():
-        logger.info("mDNS disabled (zeroconf not installed)")
-        logger.info("Install with: pip install zeroconf")
-        return None
-
-    logger.info("Starting mDNS Service Discovery...")
-
-    service_type = mdns_config.service_type
-    if not service_type.endswith(".local."):
-        service_type = service_type.rstrip(".") + ".local."
-
-    mdns_svc_config = MDNSServiceConfig(
-        enabled=mdns_config.enabled,
-        service_type=service_type,
-        service_name=mdns_config.service_name,
-        port=app_config.server.port,  # use server.port, not mdns.port
-        multicast_address=mdns_config.multicast_address,
-        udp_port=mdns_config.udp_port,
-        interface=mdns_config.interface,
-    )
-
-    mdns_service = MDNSService(mdns_svc_config)
-    set_mdns_service(mdns_service)
-
-    txt_properties = {
-        "version": SERVER_VERSION,
-        "weight": "1",
-        "environment": os.getenv("ENVIRONMENT", "development"),
-    }
-
-    await mdns_service.register(txt_properties)
-
-    logger.info(
-        f"mDNS registered - Multicast: {mdns_config.multicast_address}:{mdns_config.udp_port}"
-    )
-    if mdns_config.interface:
-        logger.info(f"mDNS interface: {mdns_config.interface}")
-
-    return mdns_service
-
-
-@asynccontextmanager
-async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
-    """Application lifespan manager."""
-
-    logger.info("=" * 60)
-    logger.info("Starting Orange3 Web Backend...")
-    logger.info("=" * 60)
-
-    _init_telemetry(fastapi_app)
-
-    app_config = get_config()
-
-    await _init_database()
-    _init_registry()
-
-    set_websocket_manager(task_ws_manager)
-    set_workflow_manager(_global_workflow_manager)
-    logger.info("Async locks enabled for concurrent access protection")
-
-    task_worker_enabled = await _init_task_worker()
-
-    mdns_service = await _init_mdns(app_config)
-    fastapi_app.state.mdns_service = mdns_service
-
-    logger.info("=" * 60)
-
-    yield
-
-    # Cleanup
-    if fastapi_app.state.mdns_service:
-        logger.info("Unregistering mDNS service...")
-        await fastapi_app.state.mdns_service.unregister()
-
-    logger.info("Shutting down Orange3 Web Backend...")
-
-    if task_worker_enabled:
-        from .core.task_queue import stop_worker
-
-        await stop_worker()
-        logger.info("Task Queue worker stopped.")
-
-    from .core.data_utils import shutdown_executors
-
-    shutdown_executors()
-    logger.info("Executor pools shutdown.")
-
-    await close_db()
-    logger.info("Database connections closed.")
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -546,227 +109,43 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Attach the limiter instance and register the 429 error handler.
+# Rate limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
-# Allow runtime configuration via CORS_ALLOW_ORIGINS (comma-separated list).
-# Defaults to wildcard "*" for development; set explicit origins in production.
 _cors_env = os.environ.get("CORS_ALLOW_ORIGINS", "*")
 cors_origins = [o.strip() for o in _cors_env.split(",")] if _cors_env != "*" else ["*"]
+
+# Per CORS spec: wildcard origins cannot be used with credentials=True
+_allow_credentials = "*" not in cors_origins
+if not _allow_credentials:
+    logger.warning(
+        "CORS: allow_credentials disabled because allow_origins contains '*'. "
+        "Set CORS_ALLOW_ORIGINS environment variable to specific origins "
+        "if credentials are needed."
+    )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Warn when wildcard origins are combined with allow_credentials=True.
-# Browsers block such responses (CORS spec violation), and it signals a
-# misconfiguration that could weaken security in production.
-if "*" in cors_origins:
-    _cors_logger = logging.getLogger(__name__)
-    _cors_logger.warning(
-        "CORS misconfiguration: allow_credentials=True is set alongside "
-        "wildcard origins ('*'). Browsers will block credentialed requests "
-        "to this server. Set CORS_ALLOW_ORIGINS to explicit origin(s) in "
-        "production (e.g. 'https://example.com')."
-    )
-
-# Rate-limiting middleware — enforces default_limits defined on the Limiter
-# and adds X-RateLimit-* / Retry-After headers to every response.
+# Rate-limiting middleware
 app.add_middleware(SlowAPIMiddleware)
 
-
 # Reverse proxy header support
-class ProxyHeadersMiddleware:
-    """Process X-Forwarded-* headers from trusted reverse proxies."""
-
-    TRUSTED_CIDRS = [
-        ipaddress.ip_network(cidr.strip())
-        for cidr in os.environ.get(
-            "TRUSTED_PROXIES",
-            "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
-        ).split(",")
-        if cidr.strip()
-    ]
-
-    def __init__(self, app) -> None:
-        self.app = app
-
-    async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] in ("http", "websocket"):
-            client = scope.get("client")
-            if client:
-                try:
-                    client_ip = ipaddress.ip_address(client[0])
-                except ValueError:
-                    # Non-IP client (testclient, Unix socket, etc.) — skip proxy processing
-                    client_ip = None
-                is_trusted = client_ip is not None and any(
-                    client_ip in network for network in self.TRUSTED_CIDRS
-                )
-
-                headers = dict(scope.get("headers", []))
-                if is_trusted:
-                    # Trust X-Forwarded-For
-                    xff = headers.get(b"x-forwarded-for", b"").decode()
-                    if xff:
-                        # Use the leftmost IP as the real client
-                        real_ip = xff.split(",")[0].strip()
-                        scope["client"] = (real_ip, client[1])
-                else:
-                    # Strip forwarded headers from untrusted sources
-                    filtered_headers = [
-                        (k, v)
-                        for k, v in scope.get("headers", [])
-                        if k.lower()
-                        not in (
-                            b"x-forwarded-for",
-                            b"x-forwarded-proto",
-                            b"x-forwarded-host",
-                            b"x-real-ip",
-                        )
-                    ]
-                    scope["headers"] = filtered_headers
-
-        await self.app(scope, receive, send)
-
-
-app.add_middleware(ProxyHeadersMiddleware)
+setup_proxy_middleware(app)
 
 
 # ============================================================================
-# API Router
+# Health endpoints (registered directly on app — no /api/v1 prefix)
 # ============================================================================
 
-api_v1 = APIRouter(prefix="/api/v1")
-
-
-# ============================================================================
-# Health
-# ============================================================================
-
-
-@app.get("/health")
-async def health_check() -> dict:
-    """Health check endpoint."""
-    availability = get_availability()
-    config = get_config()
-    storage_type = (
-        config.storage.type
-    )  # 'sqlite', 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
-
-    # Database storage types
-    db_storage_types = {"sqlite", "mysql", "postgresql", "oracle", "database"}
-
-    # Storage path depends on storage type
-    if storage_type in db_storage_types:
-        storage_path = config.database.url or "sqlite:///./orange3.db"
-    else:
-        storage_path = str(get_upload_dir())
-
-    # Calculate uptime
-    uptime_seconds = time.time() - SERVER_START_TIME
-
-    # Determine database type from URL
-    db_url = config.database.url or ""
-    if "postgresql" in db_url or "postgres" in db_url:
-        database_type = "postgresql"
-    elif "mysql" in db_url:
-        database_type = "mysql"
-    elif "oracle" in db_url:
-        database_type = "oracle"
-    else:
-        database_type = "sqlite"
-
-    return {
-        "status": "healthy",
-        "service": "orange3-web-backend",
-        "version": SERVER_VERSION,
-        "uptime_seconds": round(uptime_seconds, 2),
-        "orange3_available": availability.get("orange3", False),
-        "database_type": database_type,
-        "storage_type": storage_type,
-        "storage_path": storage_path,
-        "max_file_size_mb": config.storage.max_db_file_size // (1024 * 1024),
-        "lock_type": "asyncio",
-    }
-
-
-@app.get("/internal/metrics")
-async def get_metrics() -> dict:
-    """Get OpenTelemetry metrics summary."""
-    if OTEL_AVAILABLE and get_telemetry:
-        telemetry = get_telemetry()
-        if telemetry:
-            return telemetry.get_metrics_summary()
-    return {
-        "service": "orange3-web-backend",
-        "version": SERVER_VERSION,
-        "otel_available": OTEL_AVAILABLE,
-        "message": "OpenTelemetry not initialized",
-    }
-
-
-@app.get("/internal/logs")
-async def get_logs(limit: int = 100) -> dict:
-    """Get recent log entries."""
-    if OTEL_AVAILABLE and get_telemetry:
-        telemetry = get_telemetry()
-        if telemetry:
-            return telemetry.get_logs_response(limit)
-    return {"service": "orange3-web-backend", "total": 0, "logs": []}
-
-
-@app.get("/internal/resources")
-async def get_resources() -> dict:
-    """Get current resource usage (CPU, Memory, Disk, Throughput)."""
-    if OTEL_AVAILABLE and get_telemetry:
-        telemetry = get_telemetry()
-        if telemetry:
-            return telemetry.get_resource_usage()
-
-    # Fallback without OpenTelemetry
-    try:
-        import psutil
-
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        return {
-            "psutil_available": True,
-            "cpu_percent": psutil.cpu_percent(),
-            "memory_percent": memory.percent,
-            "memory_used_mb": int(memory.used / (1024 * 1024)),
-            "disk_percent": disk.percent,
-            "disk_used_gb": round(disk.used / (1024 * 1024 * 1024), 2),
-        }
-    except ImportError:
-        return {
-            "psutil_available": False,
-            "message": "psutil not installed. Run: pip install psutil",
-        }
-
-
-@app.get("/health/ready")
-async def readiness_check(db: AsyncSession = Depends(get_db)) -> dict:
-    """Readiness probe - checks database connection."""
-    from sqlalchemy import text
-
-    try:
-        await db.execute(text("SELECT 1"))
-        return {"status": "ready", "database": "connected"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database not ready: {e}")
-
-
-@app.get("/health/live")
-async def liveness_check() -> dict:
-    """Liveness probe - checks if service is alive."""
-    return {"status": "alive"}
+app.include_router(health_router)
 
 
 # ============================================================================
@@ -776,19 +155,7 @@ async def liveness_check() -> dict:
 
 @app.websocket("/ws/tasks/{tenant_id}")
 async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str) -> None:
-    """
-    Task 진행률 및 완료 알림 WebSocket 엔드포인트.
-
-    클라이언트는 연결 후 특정 task_id를 구독할 수 있습니다:
-    - {"action": "subscribe", "task_id": "..."} - 특정 Task 구독
-    - {"action": "subscribe", "task_id": "*"} - 모든 Task 구독
-    - {"action": "unsubscribe", "task_id": "..."} - 구독 해제
-
-    서버는 다음 메시지를 전송합니다:
-    - {"type": "task_progress", "task_id": "...", "progress": 50.0, "message": "..."}
-    - {"type": "task_completed", "task_id": "...", "status": "completed", "result": {...}}
-    - {"type": "task_completed", "task_id": "...", "status": "failed", "error": "..."}
-    """
+    """Task progress and completion notification WebSocket."""
     await task_ws_manager.connect(websocket, tenant_id)
 
     try:
@@ -813,377 +180,6 @@ async def task_websocket_endpoint(websocket: WebSocket, tenant_id: str) -> None:
         task_ws_manager.disconnect(websocket, tenant_id)
 
 
-# WebSocket 연결 수 조회 엔드포인트
-@app.get("/internal/ws-stats")
-async def get_websocket_stats() -> dict:
-    """WebSocket 연결 통계."""
-    return {"total_connections": task_ws_manager.get_connection_count(), "status": "ok"}
-
-
-# ============================================================================
-# Data Loading Endpoints
-# ============================================================================
-
-
-class UrlLoadRequest(BaseModel):
-    url: str
-
-
-def _extract_domain_columns(domain) -> list[dict]:
-    """Extract column metadata from an Orange3 domain."""
-    columns = []
-    for var in domain.attributes:
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "feature",
-                "values": ", ".join(var.values)
-                if hasattr(var, "values") and var.values
-                else "",
-            }
-        )
-    if domain.class_var:
-        var = domain.class_var
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "target",
-                "values": ", ".join(var.values)
-                if hasattr(var, "values") and var.values
-                else "",
-            }
-        )
-    for var in domain.metas:
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "meta",
-                "values": "",
-            }
-        )
-    return columns
-
-
-async def _resolve_file_path(
-    path: str, tenant_id: Optional[str]
-) -> tuple[str, Any, Any]:
-    """Resolve path to actual filesystem path, returning (actual_path, temp_file, metadata).
-
-    Handles file: prefix (storage lookup), uploads/ prefix, and datasets/ prefix.
-    Callers are responsible for cleaning up temp_file if not None.
-    """
-    import tempfile
-    from .core.file_storage import get_file, get_file_metadata
-
-    actual_path = path
-    temp_file = None
-    metadata = None
-
-    if path.startswith("file:"):
-        file_id = path.replace("file:", "")
-        logger.info(f"Loading file by ID: {file_id}, tenant: {tenant_id}")
-
-        metadata = await get_file_metadata(file_id, tenant_id)
-        if not metadata:
-            return path, None, None  # Signal: file not found
-
-        content = await get_file(file_id, tenant_id)
-        if not content:
-            return path, None, metadata  # Signal: content not found
-
-        suffix = Path(metadata.filename).suffix or ".tab"
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        temp_file.write(content)
-        temp_file.close()
-        actual_path = temp_file.name
-        logger.info(f"Created temp file: {actual_path} for {metadata.filename}")
-
-    elif path.startswith("uploads/"):
-        from .core.config import get_upload_dir as _get_upload_dir
-
-        upload_dir = _get_upload_dir()
-        full_path = upload_dir / path.replace("uploads/", "")
-        if full_path.exists():
-            actual_path = str(full_path)
-
-    elif path.startswith("datasets/"):
-        # Built-in Orange3 datasets — strip path prefix and extension
-        actual_path = path.replace("datasets/", "").split(".")[0]
-
-    elif "/" in path and not path.startswith(("/", ".")):
-        # Datasets widget paths (e.g. "core/iris.tab") stored in datasets_cache/
-        from .core.config import get_datasets_cache_dir as _get_datasets_cache_dir
-
-        datasets_cache_dir = _get_datasets_cache_dir()
-        full_path = datasets_cache_dir / path
-        if full_path.exists():
-            actual_path = str(full_path)
-
-    return actual_path, temp_file, metadata
-
-
-async def _apply_metadata_overrides(
-    columns: list, path: str, tenant_id: Optional[str]
-) -> list:
-    """Read .metadata.json sidecar for the given path and apply column type/role overrides."""
-    from .core.config import get_tenant_upload_dir
-
-    file_id_for_meta = path
-    if path.startswith("file:"):
-        file_id_for_meta = path.replace("file:", "")
-    elif path.startswith("uploads/"):
-        file_id_for_meta = path.replace("uploads/", "")
-
-    upload_dir = get_tenant_upload_dir(tenant_id or "default")
-    metadata_path = upload_dir / f"{file_id_for_meta}.metadata.json"
-
-    if not metadata_path.exists():
-        return columns
-
-    try:
-
-        def _read_metadata():
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-
-        metadata_overrides = await asyncio.to_thread(_read_metadata)
-
-        meta_cols = {col["name"]: col for col in metadata_overrides.get("columns", [])}
-
-        for col in columns:
-            if col["name"] in meta_cols:
-                override = meta_cols[col["name"]]
-                col["type"] = override.get("type", col["type"])
-                col["role"] = override.get("role", col["role"])
-
-        logger.info(f"Applied column metadata overrides from {metadata_path}")
-    except Exception as e:
-        logger.warning(f"Failed to load metadata overrides: {e}")
-
-    return columns
-
-
-def _paginate_orange_data(
-    data: Any, offset: int, limit: int
-) -> tuple[list | None, dict | None]:
-    """Slice Orange Table rows and build a pagination dict.
-
-    Returns (paginated_rows_list, pagination_dict), or (None, None) when limit <= 0.
-    """
-    total_rows = len(data)
-
-    if limit is None or limit <= 0:
-        return None, None
-
-    end_idx = min(offset + limit, total_rows)
-    paginated_rows = data[offset:end_idx]
-
-    paginated_data = []
-    for row in paginated_rows:
-        row_data = []
-        for val in row:
-            if hasattr(val, "is_nan") and val.is_nan():
-                row_data.append(None)
-            else:
-                row_data.append(float(val) if not isinstance(val, str) else val)
-        if data.domain.class_var:
-            class_val = row.get_class()
-            if hasattr(class_val, "is_nan") and class_val.is_nan():
-                row_data.append(None)
-            else:
-                row_data.append(str(class_val))
-        paginated_data.append(row_data)
-
-    pagination = {
-        "offset": offset,
-        "limit": limit,
-        "total": total_rows,
-        "hasMore": end_idx < total_rows,
-    }
-
-    return paginated_data, pagination
-
-
-@api_v1.get("/data/load", tags=["Data"])
-async def load_data_from_path(
-    path: str,
-    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID"),
-    offset: int = 0,
-    limit: Optional[int] = None,
-) -> dict:
-    """Load data from a local file path or file ID.
-
-    [BE-PERF-001] Pagination support added for large datasets.
-
-    Args:
-        path: File path or file ID (file:{uuid})
-        x_tenant_id: Tenant ID header
-        offset: Starting row index (default: 0)
-        limit: Maximum number of rows to return (default: None = all rows)
-    """
-    # If Orange3 not available, return mock data
-    if not ORANGE_AVAILABLE:
-        return get_mock_data_info(path)
-
-    actual_path, temp_file, metadata = await _resolve_file_path(path, x_tenant_id)
-
-    # Handle file-not-found / content-not-found cases from _resolve_file_path
-    if path.startswith("file:") and metadata is None:
-        return {
-            "name": "File Not Found",
-            "description": "파일을 찾을 수 없습니다. 파일을 다시 업로드해주세요.",
-            "path": path,
-            "instances": 0,
-            "features": 0,
-            "missingValues": False,
-            "classType": "None",
-            "classValues": None,
-            "metaAttributes": 0,
-            "columns": [],
-            "error": f"File not found: {path.replace('file:', '')}",
-        }
-
-    if path.startswith("file:") and temp_file is None and metadata is not None:
-        file_id = path.replace("file:", "")
-        return {
-            "name": metadata.original_filename or metadata.filename,
-            "description": "파일 내용을 읽을 수 없습니다.",
-            "path": path,
-            "instances": 0,
-            "features": 0,
-            "missingValues": False,
-            "classType": "None",
-            "classValues": None,
-            "metaAttributes": 0,
-            "columns": [],
-            "error": f"File content not found: {file_id}",
-        }
-
-    try:
-        from Orange.data import Table
-
-        data = await asyncio.to_thread(Table, actual_path)
-
-        columns = _extract_domain_columns(data.domain)
-        columns = await _apply_metadata_overrides(columns, path, x_tenant_id)
-
-        # Build display name
-        if path.startswith("file:") and metadata:
-            original_name = metadata.original_filename or metadata.filename
-            display_name = Path(original_name).stem
-        else:
-            display_name = data.name or path.split("/")[-1].split(":")[-1]
-
-        # [BE-PERF-001] Apply pagination if specified
-        paginated_data, pagination = _paginate_orange_data(data, offset, limit or 0)
-
-        response = {
-            "name": display_name,
-            "description": "",
-            "path": path,
-            "instances": len(data),
-            "features": len(data.domain.attributes),
-            "missingValues": data.has_missing(),
-            "classType": "Classification"
-            if data.domain.class_var and not data.domain.class_var.is_continuous
-            else "Regression"
-            if data.domain.class_var
-            else "None",
-            "classValues": len(data.domain.class_var.values)
-            if data.domain.class_var and hasattr(data.domain.class_var, "values")
-            else None,
-            "metaAttributes": len(data.domain.metas),
-            "columns": columns,
-        }
-
-        if pagination:
-            response["data"] = paginated_data
-            response["pagination"] = pagination
-
-        return response
-    except Exception as e:
-        logger.error(f"Failed to load data from {actual_path}: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to load data from '{path}': {str(e)}"
-        )
-    finally:
-        if temp_file and Path(temp_file.name).exists():
-            try:
-                Path(temp_file.name).unlink()
-            except Exception:
-                pass
-
-
-@api_v1.post("/data/load-url", tags=["Data"])
-async def load_data_from_url(request: UrlLoadRequest) -> dict:
-    """
-    Load data from a URL.
-
-    Security: Validates URL to prevent SSRF attacks.
-    """
-    if not ORANGE_AVAILABLE:
-        raise HTTPException(status_code=501, detail="Orange3 not available")
-
-    # Validate URL for SSRF
-    url = request.url
-    is_valid, error_msg = await validate_url_for_ssrf(url)
-    if not is_valid:
-        logger.warning(f"SSRF attempt blocked: {url} - {error_msg}")
-        raise HTTPException(status_code=403, detail=f"URL not allowed: {error_msg}")
-
-    try:
-        from Orange.data import Table
-        import tempfile
-        import httpx
-        import os
-
-        # Download to temp file using async streaming to avoid blocking the event loop
-        logger.info(f"Downloading from validated URL: {url}")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp_path = tmp.name
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                with open(tmp_path, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
-
-        try:
-            # Load the data without blocking the event loop
-            data = await asyncio.to_thread(Table, tmp_path)
-
-            # Get column info
-            columns = _extract_domain_columns(data.domain)
-
-            return {
-                "name": url.split("/")[-1],
-                "description": f"Loaded from {url}",
-                "instances": len(data),
-                "features": len(data.domain.attributes),
-                "missingValues": data.has_missing(),
-                "classType": "Classification"
-                if data.domain.class_var and not data.domain.class_var.is_continuous
-                else "Regression"
-                if data.domain.class_var
-                else "None",
-                "classValues": len(data.domain.class_var.values)
-                if data.domain.class_var and hasattr(data.domain.class_var, "values")
-                else None,
-                "metaAttributes": len(data.domain.metas),
-                "columns": columns,
-            }
-        finally:
-            # Clean up temp file
-            os.unlink(tmp_path)
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 # ============================================================================
 # Legacy Endpoints
 # ============================================================================
@@ -1196,9 +192,15 @@ async def legacy_widgets() -> dict:
 
 
 # ============================================================================
-# Include Widget Routers
+# API v1 Router
 # ============================================================================
 
+api_v1 = APIRouter(prefix="/api/v1")
+
+# Data loading
+api_v1.include_router(data_router)
+
+# Widget routers
 api_v1.include_router(scatter_plot_router)
 api_v1.include_router(distributions_router)
 api_v1.include_router(bar_plot_router)
@@ -1230,24 +232,21 @@ api_v1.include_router(word_cloud_router)
 api_v1.include_router(data_info_router)
 api_v1.include_router(feature_statistics_router)
 
-# Include Task Queue Router
+# Task queue
 api_v1.include_router(task_api_router)
 
-# Include Workflow Router
+# Workflow
 api_v1.include_router(workflow_router)
 
-# Include Widget Registry Router
+# Widget registry
 api_v1.include_router(widget_registry_router)
 
-# Include Auth Router
+# Auth
 from .auth_routes import router as auth_router  # noqa: E402
 
 api_v1.include_router(auth_router)
 
-# ============================================================================
-# Include Main Router
-# ============================================================================
-
+# Mount the versioned API
 app.include_router(api_v1)
 
 
@@ -1262,7 +261,8 @@ if __name__ == "__main__":
     import uvicorn
 
     trusted_proxies = os.environ.get(
-        "TRUSTED_PROXIES", "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+        "TRUSTED_PROXIES",
+        "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
     )
     uvicorn.run(
         app,

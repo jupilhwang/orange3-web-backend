@@ -36,7 +36,7 @@ class TestDataLoadErrorRaisesHTTPException:
         # Table is imported locally inside load_data_from_path via
         # `from Orange.data import Table`, so we patch the module-level source.
         with (
-            patch("app.main.ORANGE_AVAILABLE", True),
+            patch("app.core.orange_compat.ORANGE_AVAILABLE", True),
             patch(
                 "Orange.data.Table",
                 side_effect=FileNotFoundError("No such file: 'nonexistent_dataset'"),

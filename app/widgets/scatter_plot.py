@@ -12,13 +12,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/visualize", tags=["Visualize"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    import numpy as np
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table
 
 
 class ScatterPlotRequest(BaseModel):
@@ -52,11 +46,11 @@ async def get_scatter_plot_data(
     try:
         from Orange.data import Table
         import numpy as np
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         # Load data (supports datasets, uploads, kmeans results)
         logger.info(f"Loading scatter plot data from: {request.data_path} (session: {x_session_id})")
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         original_len = len(data)
@@ -298,10 +292,10 @@ async def select_scatter_plot_data(
         raise HTTPException(status_code=501, detail="Orange3 not available")
     
     try:
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         logger.info(f"Loading scatter plot selection from: {request.data_path} (session: {x_session_id})")
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(status_code=400, detail=f"Failed to load data: {request.data_path}")
         
@@ -337,11 +331,11 @@ async def find_informative_projections(
         raise HTTPException(status_code=501, detail="Orange3 not available")
     
     try:
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         import numpy as np
         
         logger.info(f"Finding informative projections for: {request.path}")
-        data = load_data(request.path, session_id=x_session_id)
+        data = await async_load_data(request.path, session_id=x_session_id)
         if data is None:
             raise HTTPException(status_code=400, detail=f"Failed to load data: {request.path}")
         

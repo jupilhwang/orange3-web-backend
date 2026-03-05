@@ -205,7 +205,12 @@ async def list_workflows(tenant: Tenant = Depends(get_current_tenant)) -> list:
                     )
                 else:
                     result.append(
-                        {"id": workflow_id, "title": "", "node_count": 0, "link_count": 0}
+                        {
+                            "id": workflow_id,
+                            "title": "",
+                            "node_count": 0,
+                            "link_count": 0,
+                        }
                     )
 
     return result
@@ -263,6 +268,7 @@ async def get_workflow(
     raise HTTPException(status_code=500, detail="Invalid workflow state")
 
 
+@workflow_router.delete("/workflows/{workflow_id}", tags=["Workflows"])
 async def delete_workflow(
     workflow_id: str, tenant: Tenant = Depends(get_current_tenant)
 ) -> dict:
@@ -527,6 +533,12 @@ async def add_node(
                 position=NodePosition(x=node.x, y=node.y),
             )
             _workflow_manager.add_node(tenant.id, workflow_id, new_node)
+            return new_node.model_dump()
+
+        raise HTTPException(status_code=503, detail="Workflow adapter unavailable")
+
+
+@workflow_router.delete("/workflows/{workflow_id}/nodes/{node_id}", tags=["Nodes"])
 async def delete_node(
     workflow_id: str, node_id: str, tenant: Tenant = Depends(get_current_tenant)
 ) -> dict:

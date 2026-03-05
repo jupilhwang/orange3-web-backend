@@ -16,15 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model", tags=["Model"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table, Domain, ContinuousVariable
-    from Orange.projection import PCA
-    import numpy as np
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Domain, ContinuousVariable
 
 # In-memory storage for PCA results
 _pca_results: Dict[str, Any] = {}
@@ -75,6 +67,8 @@ async def transform_pca(
         return PCAResponse(success=False, error="Orange3 not available")
 
     try:
+        import numpy as np
+
         # Validate n_components
         if request.n_components < 1:
             raise HTTPException(
@@ -82,12 +76,12 @@ async def transform_pca(
             )
 
         # Load data
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.debug(
             f"[PCA] Loading data from {request.data_path} with session_id={x_session_id}"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
 
         if data is None:
             raise HTTPException(
@@ -293,6 +287,8 @@ async def get_pca_info(pca_id: str):
     result = _pca_results[pca_id]
     data = result["data"]
     eigenvalues = result["eigenvalues"]
+
+    import numpy as np
 
     total_variance = np.sum(np.abs(eigenvalues))
     explained_ratios = (

@@ -14,14 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table, ContinuousVariable, DiscreteVariable, StringVariable
-    import Orange.data.filter as data_filter
-    from Orange.data.filter import FilterContinuous, FilterString
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table, DiscreteVariable, ContinuousVariable, StringVariable
 
 
 class SelectRowsCondition(BaseModel):
@@ -57,13 +50,13 @@ async def select_rows(
         from Orange.data import Table, ContinuousVariable, DiscreteVariable, StringVariable
         import Orange.data.filter as data_filter
         from Orange.data.filter import FilterContinuous, FilterString
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         data_source = request.data_source
         
         # Use common data loading utility (supports sampler, kmeans, uploads, datasets)
         logger.info(f"Loading Select Rows data from: {data_source} (session: {x_session_id})")
-        data = load_data(data_source, session_id=x_session_id)
+        data = await async_load_data(data_source, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Data not found: {data_source}")

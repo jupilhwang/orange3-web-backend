@@ -136,9 +136,9 @@ async def load_corpus(
 
         # Option 1: Load from Data input (Table)
         if request.data_path:
-            from app.core.data_utils import load_data
+            from app.core.data_utils import async_load_data
 
-            table = load_data(request.data_path)
+            table = await async_load_data(request.data_path)
 
             if table is None:
                 return CorpusResponse(

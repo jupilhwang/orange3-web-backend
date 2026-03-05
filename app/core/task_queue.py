@@ -32,7 +32,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 from functools import wraps
 
@@ -57,7 +57,9 @@ _progress_buffer_lock = asyncio.Lock()
 _PROGRESS_DEBOUNCE_SECS = 0.5  # skip DB write if last write was < 0.5 s ago
 
 
-def task(name: str = None, max_retries: int = 3, priority: int = TaskPriority.NORMAL) -> Callable:
+def task(
+    name: str = None, max_retries: int = 3, priority: int = TaskPriority.NORMAL
+) -> Callable:
     """
     태스크 데코레이터.
 
@@ -332,7 +334,9 @@ async def cancel_task(task_id: str) -> bool:
                     TaskQueueDB.id == task_id, TaskQueueDB.status == TaskStatus.PENDING
                 )
             )
-            .values(status=TaskStatus.CANCELLED, completed_at=datetime.utcnow())
+            .values(
+                status=TaskStatus.CANCELLED, completed_at=datetime.now(timezone.utc)
+            )
         )
         await session.commit()
 
@@ -376,7 +380,7 @@ async def fetch_next_task(
 
         if task:
             task.status = TaskStatus.RUNNING
-            task.started_at = datetime.utcnow()
+            task.started_at = datetime.now(timezone.utc)
             task.worker_id = worker_id
             await session.commit()
             await session.refresh(task)
@@ -402,7 +406,7 @@ async def complete_task(task_id: str, result: Any = None) -> None:
                 progress=100.0,
                 progress_message="완료",
                 result=json.dumps(result) if result is not None else None,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
             )
         )
         await session.commit()
@@ -447,7 +451,7 @@ async def fail_task(task_id: str, error: str, retry: bool = True) -> None:
             # 최종 실패
             task.status = TaskStatus.FAILED
             task.error = error
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(timezone.utc)
             task.progress_message = "실패"
             final_status = TaskStatus.FAILED
             logger.error(f"Task failed: {task_id} - {error}")
@@ -469,7 +473,7 @@ async def cleanup_stale_tasks(timeout_minutes: int = 30) -> int:
     Returns:
         정리된 태스크 수
     """
-    cutoff = datetime.utcnow() - timedelta(minutes=timeout_minutes)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
 
     async with async_session_maker() as session:
         result = await session.execute(
@@ -500,7 +504,7 @@ async def cleanup_old_tasks(days: int = 7) -> int:
     Returns:
         삭제된 태스크 수
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     async with async_session_maker() as session:
         result = await session.execute(

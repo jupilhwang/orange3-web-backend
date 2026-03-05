@@ -13,13 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["Data"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE
 
 SUPPORTED_FUNCTIONS = {"mean", "sum", "count", "min", "max", "std", "median"}
 
@@ -81,12 +75,12 @@ async def group_by(request: GroupByRequest, x_session_id: Optional[str] = Header
 
     try:
         import pandas as pd
-        from app.core.data_utils import load_data as load_data_util
+        from app.core.data_utils import async_load_data as async_load_data_util
 
         logger.info(
             f"Loading Group By data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data_util(request.data_path, session_id=x_session_id)
+        data = await async_load_data_util(request.data_path, session_id=x_session_id)
 
         if data is None:
             raise HTTPException(

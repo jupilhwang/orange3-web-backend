@@ -60,8 +60,8 @@ def _get_version() -> str:
     if _VERSION_FILE.exists():
         try:
             return _VERSION_FILE.read_text().strip()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Suppressed error: {e}")
     return "0.0.0"
 
 

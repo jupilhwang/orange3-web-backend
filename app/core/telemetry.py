@@ -13,7 +13,7 @@ import time
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -462,7 +462,7 @@ class Telemetry:
 
     def get_resource_usage(self) -> Dict[str, Any]:
         """Get current resource usage."""
-        snapshot = {"timestamp": datetime.utcnow().isoformat()}
+        snapshot = {"timestamp": datetime.now(timezone.utc).isoformat()}
         if PSUTIL_AVAILABLE:
             snapshot.update(
                 {
@@ -523,7 +523,7 @@ class OTelLogHandler(logging.Handler):
             span_context = span.get_span_context() if span else None
 
             entry = LogEntry(
-                timestamp=datetime.utcnow().isoformat() + "Z",
+                timestamp=datetime.now(timezone.utc).isoformat() + "Z",
                 level=record.levelname,
                 message=self.format(record),
                 service=self.telemetry.config.service_name,
@@ -541,7 +541,7 @@ class OTelLogHandler(logging.Handler):
             )
 
             self.telemetry.add_log_entry(entry)
-        except Exception:
+        except Exception as e:  # noqa: F841
             pass  # Don't let logging errors crash the app
 
 

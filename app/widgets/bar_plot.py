@@ -13,13 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Visualize"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    import numpy as np
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE, Table
 
 # Datasets cache directory
 DATASETS_CACHE_DIR = Path("./datasets")
@@ -50,12 +44,12 @@ async def get_barplot_data(
     try:
         from Orange.data import Table
         import numpy as np
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
         
         # Load dataset (supports datasets, uploads, kmeans results)
         dataset_path = request.dataset_path
         logger.info(f"Loading bar plot data from: {dataset_path} (session: {x_session_id})")
-        data = load_data(dataset_path, session_id=x_session_id)
+        data = await async_load_data(dataset_path, session_id=x_session_id)
         
         if data is None:
             raise HTTPException(status_code=404, detail=f"Dataset not found or failed to load: {dataset_path}")

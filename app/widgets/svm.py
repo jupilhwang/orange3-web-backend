@@ -14,15 +14,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model", tags=["Model"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    from Orange.classification import SVMLearner
-    import numpy as np
+from app.core.orange_compat import ORANGE_AVAILABLE
 
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+if ORANGE_AVAILABLE:
+    from Orange.classification import SVMLearner
 
 # Model storage
 _svm_models: Dict[str, Any] = {}
@@ -133,12 +128,12 @@ async def train_svm(
                 )
 
         # Load data
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.info(
             f"Loading SVM data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
 
         if data is None:
             raise HTTPException(
@@ -217,8 +212,8 @@ async def train_svm(
             skl = getattr(model, "skl_model", None)
             if skl is not None and hasattr(skl, "support_vectors_"):
                 support_vectors_count = int(skl.support_vectors_.shape[0])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Suppressed error: {e}")
 
         model_info = {
             "name": request.name,
@@ -275,8 +270,8 @@ async def get_svm_info(model_id: str):
         if skl is not None and hasattr(skl, "support_vectors_"):
             info["support_vectors"] = int(skl.support_vectors_.shape[0])
             info["n_support"] = [int(x) for x in skl.n_support_]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Suppressed error: {e}")
 
     return info
 

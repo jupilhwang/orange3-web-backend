@@ -22,7 +22,7 @@ import hashlib
 import logging
 import zlib
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, BinaryIO, Union, Tuple
 from dataclasses import dataclass
@@ -252,7 +252,7 @@ class FilesystemStorage(StorageBackend):
             category=category,
             tenant_id=tenant_id,
             checksum=checksum,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             file_path=str(file_path),
         )
 

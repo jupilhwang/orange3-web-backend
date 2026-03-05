@@ -13,14 +13,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/geo", tags=["Geo"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    import numpy as np
-
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+from app.core.orange_compat import ORANGE_AVAILABLE
 
 
 class GeoMapRequest(BaseModel):
@@ -83,12 +76,12 @@ async def get_geo_map_data(
 
     try:
         import numpy as np
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.info(
             f"Loading geo map data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
         if data is None:
             raise HTTPException(
                 status_code=400, detail=f"Failed to load data: {request.data_path}"
@@ -263,8 +256,8 @@ async def get_geo_map_data(
                                 )
                             else:
                                 tooltip[tv.name] = float(val)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Suppressed error: {e}")
                 marker["tooltip"] = tooltip
 
             markers.append(marker)

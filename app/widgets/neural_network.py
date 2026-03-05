@@ -14,15 +14,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/model", tags=["Model"])
 
-# Check Orange3 availability
-try:
-    from Orange.data import Table
-    from Orange.classification import NNClassificationLearner
-    import numpy as np
+from app.core.orange_compat import ORANGE_AVAILABLE
 
-    ORANGE_AVAILABLE = True
-except ImportError:
-    ORANGE_AVAILABLE = False
+if ORANGE_AVAILABLE:
+    from Orange.classification import NNClassificationLearner
 
 # Model storage
 _nn_models: Dict[str, Any] = {}
@@ -126,12 +121,12 @@ async def train_neural_network(
             raise HTTPException(status_code=400, detail="max_iter must be at least 1")
 
         # Load data
-        from app.core.data_utils import load_data
+        from app.core.data_utils import async_load_data
 
         logger.info(
             f"Loading Neural Network data from: {request.data_path} (session: {x_session_id})"
         )
-        data = load_data(request.data_path, session_id=x_session_id)
+        data = await async_load_data(request.data_path, session_id=x_session_id)
 
         if data is None:
             raise HTTPException(
@@ -198,6 +193,8 @@ async def train_neural_network(
         training_score = None
         n_iter_actual = None
         try:
+            import numpy as np
+
             skl = getattr(model, "skl_model", None)
             if skl is not None:
                 if hasattr(skl, "score"):
@@ -209,8 +206,8 @@ async def train_neural_network(
                     training_score = float(skl.score(X, y))
                 if hasattr(skl, "n_iter_"):
                     n_iter_actual = int(skl.n_iter_)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Suppressed error: {e}")
 
         model_info: Dict[str, Any] = {
             "name": request.name,
@@ -269,8 +266,8 @@ async def get_neural_network_info(model_id: str):
         skl = getattr(model, "skl_model", None)
         if skl is not None and hasattr(skl, "n_iter_"):
             info["n_iter"] = int(skl.n_iter_)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Suppressed error: {e}")
 
     return info
 
