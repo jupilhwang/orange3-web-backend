@@ -12,51 +12,32 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 
 # ── Domain helpers ───────────────────────────────────────────────
 
 
+def _make_column_dict(var, role: str) -> dict:
+    """Build a single column metadata dict from an Orange3 variable."""
+    return {
+        "name": var.name,
+        "type": "numeric" if var.is_continuous else "categorical",
+        "role": role,
+        "values": (
+            ", ".join(var.values) if hasattr(var, "values") and var.values else ""
+        ),
+    }
+
+
 def extract_domain_columns(domain) -> list[dict]:
     """Extract column metadata from an Orange3 domain."""
-    columns = []
-    for var in domain.attributes:
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "feature",
-                "values": (
-                    ", ".join(var.values)
-                    if hasattr(var, "values") and var.values
-                    else ""
-                ),
-            }
-        )
+    columns = [_make_column_dict(var, "feature") for var in domain.attributes]
     if domain.class_var:
-        var = domain.class_var
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "target",
-                "values": (
-                    ", ".join(var.values)
-                    if hasattr(var, "values") and var.values
-                    else ""
-                ),
-            }
-        )
-    for var in domain.metas:
-        columns.append(
-            {
-                "name": var.name,
-                "type": "numeric" if var.is_continuous else "categorical",
-                "role": "meta",
-                "values": "",
-            }
-        )
+        columns.append(_make_column_dict(domain.class_var, "target"))
+    columns.extend(_make_column_dict(var, "meta") for var in domain.metas)
     return columns
 
 
@@ -101,6 +82,10 @@ async def resolve_file_path(
 
         upload_dir = _get_upload_dir()
         full_path = upload_dir / path.replace("uploads/", "")
+        resolved = full_path.resolve()
+        if not resolved.is_relative_to(upload_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        full_path = resolved
         if full_path.exists():
             actual_path = str(full_path)
 
@@ -112,6 +97,10 @@ async def resolve_file_path(
 
         datasets_cache_dir = _get_datasets_cache_dir()
         full_path = datasets_cache_dir / path
+        resolved = full_path.resolve()
+        if not resolved.is_relative_to(datasets_cache_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        full_path = resolved
         if full_path.exists():
             actual_path = str(full_path)
 

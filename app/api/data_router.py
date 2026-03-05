@@ -86,10 +86,10 @@ async def load_data_from_path(
 
         return response
     except Exception as e:
-        logger.error("Failed to load data from %s: %s", actual_path, e)
+        logger.exception("Failed to load data from path '%s'", path)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to load data from '{path}': {str(e)}",
+            detail=f"Failed to load data from '{path}'",
         )
     finally:
         if temp_file and Path(temp_file.name).exists():
@@ -138,6 +138,8 @@ async def load_data_from_url(request: UrlLoadRequest) -> dict:
             os.unlink(tmp_path)
 
     except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        logger.exception("SSRF validation error for URL '%s'", url)
+        raise HTTPException(status_code=403, detail="URL not allowed")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.exception("Failed to load data from URL '%s'", url)
+        raise HTTPException(status_code=400, detail="Failed to load data from URL")

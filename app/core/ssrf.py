@@ -10,6 +10,7 @@ import asyncio
 import ipaddress
 import logging
 import socket
+import ssl
 from urllib.parse import urlparse
 
 import httpx
@@ -114,8 +115,18 @@ async def fetch_ssrf_safe(url: str, *, timeout: float = 60.0) -> httpx.Response:
 
     logger.info("SSRF-safe fetch: %s → %s (Host: %s)", url, ip_url, hostname)
 
+    # Build SSL context: verify certificate but allow IP-based connections
+    # (hostname check disabled because we connect via IP, not hostname)
+    if scheme == "https":
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        verify_param = ssl_context
+    else:
+        verify_param = False
+
     async with httpx.AsyncClient(
-        verify=False,
+        verify=verify_param,
         timeout=timeout,
     ) as client:
         response = await client.get(
