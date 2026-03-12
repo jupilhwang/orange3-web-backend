@@ -17,19 +17,11 @@ Note: The service port is automatically taken from server.port config.
 """
 
 import socket
+import ipaddress
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
-
-# Optional netifaces for interface-specific binding
-try:
-    import netifaces
-
-    NETIFACES_AVAILABLE = True
-except ImportError:
-    NETIFACES_AVAILABLE = False
-    netifaces = None
 
 logger = logging.getLogger(__name__)
 
@@ -144,43 +136,67 @@ class MDNSService:
         self._service_info: Optional[ServiceInfo] = None
         self._registered = False
 
+    def _get_interface_ipv4s(self, interface_name: str) -> List[str]:
+        """Get non-loopback IPv4 addresses for the named NIC interface.
+
+        Uses ifaddr (pure Python) to query OS network interface info directly,
+        without DNS resolution.
+
+        Args:
+            interface_name: NIC name (e.g. "eth0", "en0")
+
+        Returns:
+            List of non-loopback IPv4 address strings. Empty list if not found.
+        """
+        try:
+            import ifaddr
+        except ImportError:
+            logger.warning(
+                "ifaddr not installed, cannot bind to specific interface. "
+                "Install with: pip install ifaddr"
+            )
+            return []
+
+        result: List[str] = []
+        for adapter in ifaddr.get_adapters():
+            if adapter.name == interface_name:
+                for ip_info in adapter.ips:
+                    if not ip_info.is_IPv4:
+                        continue
+                    try:
+                        if not ipaddress.ip_address(ip_info.ip).is_loopback:
+                            result.append(ip_info.ip)
+                    except ValueError:
+                        logger.debug(
+                            f"Skipping malformed IP from ifaddr: {ip_info.ip!r}"
+                        )
+        return result
+
     def _get_local_ip(self) -> str:
         """Get local IP address for the service.
 
-        If mdns.interface is configured and netifaces is available,
-        returns the IP of that interface. Otherwise, determines the default outgoing IP.
+        If mdns.interface is configured, returns the IP of that NIC.
+        Otherwise, determines the default outgoing IP via UDP socket.
         """
-        # If specific interface is configured and netifaces is available, get its IP
-        if self.config.interface and NETIFACES_AVAILABLE:
+        if self.config.interface:
             try:
-                iface_addrs = netifaces.ifaddresses(self.config.interface)
-                if netifaces.AF_INET in iface_addrs:
-                    ipv4_info = iface_addrs[netifaces.AF_INET][0]
-                    ip = ipv4_info.get("addr", "127.0.0.1")
-                    logger.info(f"Using interface {self.config.interface} IP: {ip}")
-                    return ip
-                else:
-                    logger.warning(
-                        f"Interface {self.config.interface} has no IPv4 address"
-                    )
-            except ValueError:
-                logger.warning(f"Interface {self.config.interface} not found")
+                ips = self._get_interface_ipv4s(self.config.interface)
+                if ips:
+                    logger.info(f"Using interface {self.config.interface} IP: {ips[0]}")
+                    return ips[0]
+                logger.warning(
+                    f"Interface {self.config.interface} not found or has no IPv4 address"
+                )
             except Exception as e:
                 logger.warning(
                     f"Could not get IP for interface {self.config.interface}: {e}"
                 )
-        elif self.config.interface and not NETIFACES_AVAILABLE:
-            logger.warning(
-                f"mdns.interface={self.config.interface} configured but netifaces not installed"
-            )
-            logger.warning("Install with: pip install netifaces")
 
-        # Default: determine local IP via outgoing connection
+        # Default: determine local IP via outgoing UDP socket (no actual data sent)
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(0.1)
             try:
-                # Connect to a public address (doesn't actually send data)
                 s.connect(("8.8.8.8", 80))
                 ip = s.getsockname()[0]
             except Exception as e:
@@ -217,30 +233,25 @@ class MDNSService:
         return base_name
 
     def _get_interfaces(self) -> Optional[List[str]]:
-        """Get list of interface IPs for zeroconf.
+        """Get list of interface IPs for zeroconf binding.
 
         Returns:
-            List of IP addresses if interface is configured and netifaces is available,
-            None for all interfaces
+            List of IP addresses for the configured interface,
+            None to bind on all interfaces.
         """
         if not self.config.interface:
             return None
 
-        if not NETIFACES_AVAILABLE:
-            logger.warning("netifaces not installed, cannot bind to specific interface")
-            return None
-
         try:
-            iface_addrs = netifaces.ifaddresses(self.config.interface)
-            if netifaces.AF_INET in iface_addrs:
-                # Return list of IPv4 addresses for this interface
-                return [addr["addr"] for addr in iface_addrs[netifaces.AF_INET]]
-        except ValueError:
+            ips = self._get_interface_ipv4s(self.config.interface)
+            if ips:
+                return ips
             logger.warning(
-                f"Interface {self.config.interface} not found, using all interfaces"
+                f"Interface {self.config.interface} not found or has no IPv4 address, "
+                "using all interfaces"
             )
         except Exception as e:
-            logger.warning(f"Could not get interfaces: {e}")
+            logger.warning(f"Could not get interface IPs: {e}, using all interfaces")
 
         return None
 
