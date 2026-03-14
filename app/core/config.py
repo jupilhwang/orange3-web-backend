@@ -559,7 +559,7 @@ def get_database_dir() -> Path:
     """
     Get the database directory.
 
-    Priority: config file > DATABASE_DIR env > default (app root)
+    Priority: DATABASE_DIR env > config file > default (app root)
     """
     config = get_config()
 
@@ -574,7 +574,7 @@ def get_database_url() -> str:
     """
     Get the database URL.
 
-    Priority: config file > DATABASE_URL env > construct from database.dir
+    Priority: DATABASE_URL env > config file > construct from database.dir
     """
     config = get_config()
 
@@ -593,7 +593,7 @@ def get_upload_dir() -> Path:
     """
     Get the base upload directory.
 
-    Priority: config file > UPLOAD_DIR env > default (app_root/uploads)
+    Priority: UPLOAD_DIR env > config file > default (app_root/uploads)
     """
     config = get_config()
 
@@ -608,7 +608,7 @@ def get_corpus_dir() -> Path:
     """
     Get the corpus files directory.
 
-    Priority: config file > CORPUS_DIR env > {upload_dir}/corpus
+    Priority: CORPUS_DIR env > config file > {upload_dir}/corpus
     """
     config = get_config()
 
@@ -623,7 +623,7 @@ def get_datasets_cache_dir() -> Path:
     """
     Get the datasets cache directory.
 
-    Priority: config file > DATASETS_CACHE_DIR env > default (app_root/datasets_cache)
+    Priority: DATASETS_CACHE_DIR env > config file > default (app_root/datasets_cache)
     """
     config = get_config()
 

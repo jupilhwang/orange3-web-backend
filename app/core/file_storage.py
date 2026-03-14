@@ -10,7 +10,7 @@ Supported storage types:
 - 'oracle': Oracle database (planned)
 - 'filesystem' or 'local': Local filesystem
 
-Configuration (priority: config file > env var > default):
+Configuration (priority: env var > config file > default):
     storage.type: 'sqlite' (default), 'mysql', 'postgresql', 'oracle', 'filesystem', 'local'
     storage.max_db_file_size: Maximum file size for DB storage (default: 50MB)
     storage.compression_enabled: Enable zlib compression for DB storage (default: True)
