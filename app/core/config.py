@@ -2,8 +2,8 @@
 Configuration Management Module.
 
 Supports configuration from multiple sources with priority:
-    1. Configuration file (orange3-web-backend.properties)
-    2. Environment variables
+    1. Environment variables
+    2. Configuration file (orange3-web-backend.properties)
     3. Default values
 
 Configuration file locations (searched in order):
@@ -284,8 +284,8 @@ class ConfigManager:
     Configuration manager that loads settings from file and environment.
 
     Priority (highest to lowest):
-        1. Configuration file
-        2. Environment variables
+        1. Environment variables
+        2. Configuration file
         3. Default values
     """
 
@@ -377,7 +377,7 @@ class ConfigManager:
 
     def get(self, key: str, default: Any = None, value_type: Type[T] = str) -> T:
         """
-        Get configuration value with priority: file > env > default.
+        Get configuration value with priority: env > file > default.
 
         Args:
             key: Configuration key (e.g., 'database.url')
@@ -389,18 +389,18 @@ class ConfigManager:
         """
         value = None
 
-        # 1. Check config file (highest priority)
-        if key in self._file_config:
-            value = self._file_config[key]
-            logger.debug(f"Config '{key}' from file: {value}")
-
-        # 2. Check environment variable
-        elif key in self.ENV_MAPPING:
+        # 1. Check environment variable (highest priority)
+        if key in self.ENV_MAPPING:
             env_var = self.ENV_MAPPING[key]
             env_value = os.environ.get(env_var)
             if env_value is not None:
                 value = env_value
                 logger.debug(f"Config '{key}' from env {env_var}: {value}")
+
+        # 2. Check config file
+        if value is None and key in self._file_config:
+            value = self._file_config[key]
+            logger.debug(f"Config '{key}' from file: {value}")
 
         # 3. Use default
         if value is None:
